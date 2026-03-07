@@ -44,8 +44,6 @@ ignore_music.wav
 
 reports/
 
-# Ignore .cargo/ except audit.toml and config.toml (needed for CI)
-.cargo/*
-!.cargo/audit.toml
-!.cargo/config.toml
+# Ignore .cargo/ (local build optimization only)
+.cargo/
 

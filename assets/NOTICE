@@ -1,0 +1,20 @@
+Third-Party Asset Attribution
+==============================
+
+The map data, tilesets, and tile graphics included in this directory are from:
+
+  Project:  The Mana World (tmwa-client-data)
+  URL:      https://github.com/themanaworld/tmwa-client-data
+  License:  GNU General Public License v2.0 (GPLv2)
+
+These assets are redistributed under the terms of the GPLv2.
+A copy of the GPLv2 license can be found at:
+  https://www.gnu.org/licenses/old-licenses/gpl-2.0.html
+
+The original copyright belongs to The Mana World contributors.
+
+Included directories:
+  maps/               - Tiled map files (.tmx)
+  tilesets/            - Tiled tileset definitions (.tsx)
+  graphics/tiles/      - Tileset image files (.png)
+  graphics/sprites/    - Sprite image files (.png)
