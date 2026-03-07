@@ -22,18 +22,14 @@ fn main() {
                 }),
                 ..default()
             })
+            .set(ImagePlugin::default_nearest())
             .set(bevy::log::LogPlugin {
                 custom_layer: console_log_layer,
                 ..default()
             }),
     )
     .insert_resource(ClearColor(Color::BLACK))
-    .add_plugins(WorkbenchPlugin {
-        config: WorkbenchConfig {
-            show_toolbar: false,
-            ..default()
-        },
-    })
+    .add_plugins(WorkbenchPlugin::default())
     .add_plugins(TiledPlugin::default())
     .init_resource::<MapLoadRequest>()
     .add_systems(Startup, setup)
@@ -44,10 +40,8 @@ fn main() {
     app.run();
 }
 
-fn setup(mut commands: Commands, mut next_mode: ResMut<NextState<EditorMode>>) {
-    let camera_entity = commands.spawn(Camera2d).id();
-    commands.insert_resource(ExternalGameCamera(camera_entity));
-    next_mode.set(EditorMode::Play);
+fn setup(mut commands: Commands) {
+    commands.spawn(Camera2d);
 }
 
 /// Handles pending map load requests from the UI panel.
@@ -66,7 +60,7 @@ fn handle_map_load(
     }
 
     let map_handle: Handle<TiledMapAsset> = asset_server.load(&map_name);
-    commands.spawn(TiledMap(map_handle));
+    commands.spawn((TiledMap(map_handle), TilemapAnchor::Center));
     info!("Loading map: {}", map_name);
 }
 
