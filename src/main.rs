@@ -83,8 +83,26 @@ impl Default for CameraZoomState {
 #[derive(Resource)]
 struct DevWindowsEnabled(bool);
 
+/// Scroll sensitivity configuration.
+#[derive(Resource)]
+struct ScrollSensitivity {
+    /// Zoom sensitivity multiplier (applied to scroll delta).
+    zoom: f32,
+    /// Pan sensitivity multiplier (applied to drag delta).
+    pan: f32,
+}
+
+impl Default for ScrollSensitivity {
+    fn default() -> Self {
+        Self {
+            zoom: 0.01,
+            pan: 1.0,
+        }
+    }
+}
+
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 impl Default for DevWindowsEnabled {
     fn default() -> Self {
@@ -131,6 +149,7 @@ fn main() {
     .init_resource::<PreviewInput>()
     .init_resource::<CameraZoomState>()
     .init_resource::<DevWindowsEnabled>()
+    .init_resource::<ScrollSensitivity>()
     .init_resource::<MenuBarExtensions>()
     .add_systems(Startup, setup)
     .add_systems(
@@ -165,22 +184,53 @@ fn main() {
 
     // Add "Allow Developer Windows" checkbox to Settings
     let toggle_for_settings = dev_toggle.clone();
+    let zoom_sens = Arc::new(AtomicU32::new(0.01_f32.to_bits()));
+    let pan_sens = Arc::new(AtomicU32::new(1.0_f32.to_bits()));
+
+    let zoom_for_settings = zoom_sens.clone();
+    let pan_for_settings = pan_sens.clone();
     app.register_settings_section(SettingsSection {
         label: "Developer".into(),
         ui_fn: Box::new(move |ui| {
             let mut val = toggle_for_settings.load(Ordering::Relaxed);
-            if ui.checkbox(&mut val, "Allow Developer Windows").changed() {
+            if ui.checkbox(&mut val, "允许使用开发者窗口").changed() {
                 toggle_for_settings.store(val, Ordering::Relaxed);
             }
         }),
     });
 
-    // System to sync the atomic toggle → DevWindowsEnabled resource
+    app.register_settings_section(SettingsSection {
+        label: "操作灵敏度".into(),
+        ui_fn: Box::new(move |ui| {
+            let mut zoom_val = f32::from_bits(zoom_for_settings.load(Ordering::Relaxed));
+            if ui
+                .add(egui::Slider::new(&mut zoom_val, 0.001..=0.05).text("缩放灵敏度"))
+                .changed()
+            {
+                zoom_for_settings.store(zoom_val.to_bits(), Ordering::Relaxed);
+            }
+
+            let mut pan_val = f32::from_bits(pan_for_settings.load(Ordering::Relaxed));
+            if ui
+                .add(egui::Slider::new(&mut pan_val, 0.1..=3.0).text("平移灵敏度"))
+                .changed()
+            {
+                pan_for_settings.store(pan_val.to_bits(), Ordering::Relaxed);
+            }
+        }),
+    });
+
+    // System to sync the atomic toggles → resources
     let toggle_for_system = dev_toggle.clone();
+    let zoom_for_system = zoom_sens.clone();
+    let pan_for_system = pan_sens.clone();
     app.add_systems(
         Update,
-        move |mut dev_enabled: ResMut<DevWindowsEnabled>| {
+        move |mut dev_enabled: ResMut<DevWindowsEnabled>,
+              mut sensitivity: ResMut<ScrollSensitivity>| {
             dev_enabled.0 = toggle_for_system.load(Ordering::Relaxed);
+            sensitivity.zoom = f32::from_bits(zoom_for_system.load(Ordering::Relaxed));
+            sensitivity.pan = f32::from_bits(pan_for_system.load(Ordering::Relaxed));
         },
     );
 
@@ -368,6 +418,7 @@ fn apply_camera_zoom(
     mut zoom_state: ResMut<CameraZoomState>,
     input: Res<PreviewInput>,
     preview: Res<MapPreviewState>,
+    sensitivity: Res<ScrollSensitivity>,
     time: Res<Time>,
     mut camera_q: Query<(&mut Transform, &mut Projection), With<PreviewCamera>>,
 ) {
@@ -380,7 +431,7 @@ fn apply_camera_zoom(
 
     // Apply scroll delta to target scale
     if input.scroll_delta.abs() > 0.001 {
-        let zoom_factor = 1.0 - input.scroll_delta * 0.03;
+        let zoom_factor = 1.0 - input.scroll_delta * sensitivity.zoom;
         zoom_state.target_scale = (zoom_state.target_scale * zoom_factor).clamp(0.2, 30.0);
     }
 
@@ -418,6 +469,7 @@ fn apply_camera_zoom(
 fn apply_camera_pan(
     mut input: ResMut<PreviewInput>,
     zoom_state: Res<CameraZoomState>,
+    sensitivity: Res<ScrollSensitivity>,
     preview: Res<MapPreviewState>,
     mut camera_q: Query<&mut Transform, With<PreviewCamera>>,
 ) {
@@ -427,15 +479,13 @@ fn apply_camera_pan(
 
     if input.drag_delta.length_sq() > 0.001 {
         // Convert panel-pixel drag to world units.
-        // drag_delta is in panel display pixels; convert via ratio of
-        // render-target size to displayed image size, then multiply by camera scale.
         let img_w = input.image_screen_size.x.max(1.0);
         let img_h = input.image_screen_size.y.max(1.0);
         let scale_x = preview.width as f32 / img_w * zoom_state.current_scale;
         let scale_y = preview.height as f32 / img_h * zoom_state.current_scale;
 
-        transform.translation.x -= input.drag_delta.x * scale_x;
-        transform.translation.y += input.drag_delta.y * scale_y; // Flip Y
+        transform.translation.x -= input.drag_delta.x * scale_x * sensitivity.pan;
+        transform.translation.y += input.drag_delta.y * scale_y * sensitivity.pan; // Flip Y
     }
 
     // Reset per-frame input
