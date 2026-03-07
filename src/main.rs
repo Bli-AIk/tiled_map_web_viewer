@@ -207,7 +207,7 @@ fn apply_camera_zoom(
 
     // Apply scroll delta to target scale
     if input.scroll_delta.abs() > 0.001 {
-        let zoom_factor = 1.0 - input.scroll_delta * 0.1;
+        let zoom_factor = 1.0 - input.scroll_delta * 0.03;
         zoom_state.target_scale = (zoom_state.target_scale * zoom_factor).clamp(0.2, 30.0);
     }
 
@@ -277,6 +277,7 @@ fn sync_preview_to_panel(
     mut tile_state: ResMut<bevy_workbench::dock::TileLayoutState>,
     loading: Res<MapLoadingState>,
     mut input: ResMut<PreviewInput>,
+    mut images: ResMut<Assets<Image>>,
 ) {
     if state.egui_texture_id.is_none() && state.render_target != Handle::default() {
         let texture_id =
@@ -286,9 +287,31 @@ fn sync_preview_to_panel(
 
     if let Some(panel) = tile_state.get_panel_mut::<MapPreviewPanel>("map_preview") {
         panel.egui_texture_id = state.egui_texture_id;
+        panel.is_loading = loading.loading;
+
+        // Resize render target if panel size changed significantly
+        let panel_w = (panel.panel_size.x as u32).max(2);
+        let panel_h = (panel.panel_size.y as u32).max(2);
+        if panel_w > 0
+            && panel_h > 0
+            && (panel_w != state.width || panel_h != state.height)
+            && panel.panel_size.x > 10.0
+        {
+            let new_image = Image::new_target_texture(
+                panel_w,
+                panel_h,
+                TextureFormat::Rgba8UnormSrgb,
+                None,
+            );
+            if let Some(img) = images.get_mut(&state.render_target) {
+                *img = new_image;
+            }
+            state.width = panel_w;
+            state.height = panel_h;
+        }
+
         panel.width = state.width;
         panel.height = state.height;
-        panel.is_loading = loading.loading;
 
         // Read input accumulated by the panel
         input.scroll_delta += panel.pending_scroll;
@@ -317,6 +340,8 @@ struct MapPreviewPanel {
     is_hovered: bool,
     cursor_uv: Option<egui::Pos2>,
     image_screen_size: egui::Vec2,
+    /// Panel's available size last frame, for render target resizing.
+    panel_size: egui::Vec2,
 }
 
 impl WorkbenchPanel for MapPreviewPanel {
@@ -340,6 +365,7 @@ impl WorkbenchPanel for MapPreviewPanel {
         if avail.x <= 0.0 || avail.y <= 0.0 {
             return;
         }
+        self.panel_size = avail;
 
         // Fill the entire available area with the preview
         let display_size = avail;
