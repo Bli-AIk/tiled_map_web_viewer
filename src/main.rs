@@ -44,8 +44,9 @@ fn main() {
     app.run();
 }
 
-fn setup(mut commands: Commands) {
+fn setup(mut commands: Commands, mut next_mode: ResMut<NextState<EditorMode>>) {
     commands.spawn(Camera2d);
+    next_mode.set(EditorMode::Play);
 }
 
 /// Handles pending map load requests from the UI panel.
