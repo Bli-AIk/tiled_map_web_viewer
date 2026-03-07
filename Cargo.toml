@@ -10,6 +10,7 @@ description = "A Tiled map viewer with WASM support for web deployment"
 bevy = "0.18"
 bevy_workbench = "0.2"
 bevy_ecs_tiled = "0.11"
+egui = "0.33"
 
 [[bin]]
 name = "tiled_map_web_viewer"

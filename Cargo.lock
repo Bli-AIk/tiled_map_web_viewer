@@ -5494,6 +5494,7 @@ dependencies = [
  "bevy",
  "bevy_ecs_tiled",
  "bevy_workbench",
+ "egui",
 ]
 
 [[package]]
