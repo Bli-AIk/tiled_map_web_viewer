@@ -45,7 +45,8 @@ fn main() {
 }
 
 fn setup(mut commands: Commands, mut next_mode: ResMut<NextState<EditorMode>>) {
-    commands.spawn(Camera2d);
+    let camera_entity = commands.spawn(Camera2d).id();
+    commands.insert_resource(ExternalGameCamera(camera_entity));
     next_mode.set(EditorMode::Play);
 }
 
