@@ -1797,9 +1797,7 @@ dependencies = [
 
 [[package]]
 name = "bevy_workbench"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eca5d5129d041518870978eedd792cb2158eaccd43d2cfde0a590141e11f3c0b"
+version = "0.3.0"
 dependencies = [
  "bevy",
  "bevy-inspector-egui",
@@ -3010,8 +3008,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ff2abc00be7fca6ebc474524697ae276ad847ad0a6b3faa4bcb027e9a4614ad0"
 dependencies = [
  "cfg-if",
+ "js-sys",
  "libc",
  "wasi",
+ "wasm-bindgen",
 ]
 
 [[package]]
@@ -5496,6 +5496,8 @@ dependencies = [
  "bevy_egui",
  "bevy_workbench",
  "egui",
+ "getrandom 0.2.17",
+ "web-sys",
 ]
 
 [[package]]

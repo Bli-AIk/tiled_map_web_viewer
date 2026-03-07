@@ -8,7 +8,7 @@ description = "A Tiled map viewer with WASM support for web deployment"
 
 [dependencies]
 bevy = "0.18"
-bevy_workbench = "0.2"
+bevy_workbench = { version = "0.3", path = "../souprune/crates/bevy_workbench" }
 bevy_ecs_tiled = "0.11"
 bevy_egui = { version = "0.39", features = ["render"] }
 egui = "0.33"
@@ -21,3 +21,7 @@ path = "src/main.rs"
 opt-level = 3
 lto = true
 codegen-units = 1
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+getrandom = { version = "0.2", features = ["js"] }
+web-sys = { version = "0.3", features = ["Window", "Location"] }

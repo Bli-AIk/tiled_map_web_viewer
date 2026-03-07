@@ -1,3 +1,4 @@
+use bevy::asset::RecursiveDependencyLoadState;
 use bevy::camera::RenderTarget;
 use bevy::prelude::*;
 use bevy::render::render_resource::TextureFormat;
@@ -15,11 +16,27 @@ struct MapLoadRequest {
     map_to_load: Option<String>,
 }
 
-/// Tracks whether a map is currently loading.
+/// Tracks map loading progress.
 #[derive(Resource, Default)]
 struct MapLoadingState {
-    loading: bool,
+    phase: LoadPhase,
     current_map: Option<String>,
+    /// Asset handle for tracking load progress.
+    pending_handle: Option<Handle<TiledMapAsset>>,
+    /// Status text for display.
+    status_text: String,
+}
+
+#[derive(Default, PartialEq)]
+enum LoadPhase {
+    #[default]
+    Idle,
+    /// Old map is being despawned, waiting one frame before loading new.
+    Cleanup,
+    /// Asset and dependencies are loading asynchronously.
+    LoadingAssets,
+    /// Assets loaded, entities being spawned by bevy_ecs_tiled.
+    Spawning,
 }
 
 /// Holds the render target for the map preview.
@@ -62,12 +79,28 @@ impl Default for CameraZoomState {
     }
 }
 
+/// Whether the developer windows menu is enabled.
+#[derive(Resource)]
+struct DevWindowsEnabled(bool);
+
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+impl Default for DevWindowsEnabled {
+    fn default() -> Self {
+        Self(false)
+    }
+}
+
 /// Marker for the preview camera that renders maps to texture.
 #[derive(Component)]
 struct PreviewCamera;
 
 fn main() {
     let mut app = App::new();
+
+    // Shared toggle for the settings checkbox ↔ DevWindowsEnabled resource
+    let dev_toggle = Arc::new(AtomicBool::new(false));
     app.add_plugins(
         DefaultPlugins
             .set(WindowPlugin {
@@ -97,6 +130,8 @@ fn main() {
     .init_resource::<MapLoadingState>()
     .init_resource::<PreviewInput>()
     .init_resource::<CameraZoomState>()
+    .init_resource::<DevWindowsEnabled>()
+    .init_resource::<MenuBarExtensions>()
     .add_systems(Startup, setup)
     .add_systems(
         Update,
@@ -106,11 +141,48 @@ fn main() {
             sync_preview_to_panel,
             apply_camera_zoom,
             apply_camera_pan,
+            handle_dev_menu_actions,
         ),
+    )
+    .add_systems(
+        bevy_egui::EguiPrimaryContextPass,
+        sync_dev_menu.before(bevy_workbench::menu_bar::menu_bar_system),
     );
 
     app.register_panel(MapListPanel::default());
     app.register_panel(MapPreviewPanel::default());
+
+    // Hide Inspector and Console from the Window menu and default layout
+    {
+        let mut tile_state = app
+            .world_mut()
+            .resource_mut::<bevy_workbench::dock::TileLayoutState>();
+        tile_state.hide_from_window_menu("workbench_inspector");
+        tile_state.hide_from_window_menu("workbench_console");
+        tile_state.set_default_hidden("workbench_inspector");
+        tile_state.set_default_hidden("workbench_console");
+    }
+
+    // Add "Allow Developer Windows" checkbox to Settings
+    let toggle_for_settings = dev_toggle.clone();
+    app.register_settings_section(SettingsSection {
+        label: "Developer".into(),
+        ui_fn: Box::new(move |ui| {
+            let mut val = toggle_for_settings.load(Ordering::Relaxed);
+            if ui.checkbox(&mut val, "Allow Developer Windows").changed() {
+                toggle_for_settings.store(val, Ordering::Relaxed);
+            }
+        }),
+    });
+
+    // System to sync the atomic toggle → DevWindowsEnabled resource
+    let toggle_for_system = dev_toggle.clone();
+    app.add_systems(
+        Update,
+        move |mut dev_enabled: ResMut<DevWindowsEnabled>| {
+            dev_enabled.0 = toggle_for_system.load(Ordering::Relaxed);
+        },
+    );
 
     app.run();
 }
@@ -150,42 +222,143 @@ fn setup(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
     });
 }
 
-/// Handles pending map load requests.
+/// Syncs the "Developer Windows" custom menu to the menu bar.
+fn sync_dev_menu(
+    dev_enabled: Res<DevWindowsEnabled>,
+    mut extensions: ResMut<MenuBarExtensions>,
+    tile_state: Res<bevy_workbench::dock::TileLayoutState>,
+) {
+    let inspector_visible = tile_state.is_panel_visible("workbench_inspector");
+    let console_visible = tile_state.is_panel_visible("workbench_console");
+
+    extensions.custom_menus = vec![CustomMenu {
+        id: "dev_windows",
+        label: "Developer Windows".into(),
+        enabled: dev_enabled.0,
+        items: vec![
+            MenuExtItem {
+                id: "toggle_inspector",
+                label: if inspector_visible {
+                    "✓ Inspector".into()
+                } else {
+                    "  Inspector".into()
+                },
+                enabled: true,
+            },
+            MenuExtItem {
+                id: "toggle_console",
+                label: if console_visible {
+                    "✓ Console".into()
+                } else {
+                    "  Console".into()
+                },
+                enabled: true,
+            },
+        ],
+    }];
+}
+
+/// Handles developer window menu actions (toggle inspector/console).
+fn handle_dev_menu_actions(
+    mut menu_actions: MessageReader<MenuAction>,
+    mut tile_state: ResMut<bevy_workbench::dock::TileLayoutState>,
+) {
+    for action in menu_actions.read() {
+        match action.id {
+            "toggle_inspector" => {
+                if tile_state.is_panel_visible("workbench_inspector") {
+                    tile_state.close_panel("workbench_inspector");
+                } else {
+                    tile_state.request_open_panel("workbench_inspector");
+                }
+            }
+            "toggle_console" => {
+                if tile_state.is_panel_visible("workbench_console") {
+                    tile_state.close_panel("workbench_console");
+                } else {
+                    tile_state.request_open_panel("workbench_console");
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Phase 1: Accept load request, despawn old map, enter Cleanup phase.
 fn handle_map_load(
     mut commands: Commands,
     mut load_request: ResMut<MapLoadRequest>,
     mut loading: ResMut<MapLoadingState>,
-    asset_server: Res<AssetServer>,
     existing_maps: Query<Entity, With<TiledMap>>,
 ) {
     let Some(map_name) = load_request.map_to_load.take() else {
         return;
     };
 
+    // Despawn existing map entities
     for entity in &existing_maps {
         commands.entity(entity).despawn();
     }
 
-    let map_handle: Handle<TiledMapAsset> = asset_server.load(&map_name);
-    commands.spawn((TiledMap(map_handle), TilemapAnchor::Center));
-
-    loading.loading = true;
-    loading.current_map = Some(map_name.clone());
-    info!("Loading map: {}", map_name);
+    loading.phase = LoadPhase::Cleanup;
+    loading.current_map = Some(map_name);
+    loading.pending_handle = None;
+    loading.status_text = "Cleaning up...".into();
 }
 
-/// Detects when a map finishes loading by checking if tilemap children exist.
+/// Phase 2+: Drive the loading state machine.
 fn track_map_loading(
+    mut commands: Commands,
     mut loading: ResMut<MapLoadingState>,
+    asset_server: Res<AssetServer>,
     maps: Query<&Children, With<TiledMap>>,
 ) {
-    if !loading.loading {
-        return;
-    }
-    // Map is loaded when the TiledMap entity has children (layers spawned)
-    for children in &maps {
-        if !children.is_empty() {
-            loading.loading = false;
+    match loading.phase {
+        LoadPhase::Idle => {}
+        LoadPhase::Cleanup => {
+            // Wait one frame after despawn, then start loading
+            if let Some(ref map_name) = loading.current_map.clone() {
+                let handle: Handle<TiledMapAsset> = asset_server.load(map_name);
+                loading.pending_handle = Some(handle);
+                loading.phase = LoadPhase::LoadingAssets;
+                loading.status_text = "Loading map assets...".into();
+                info!("Loading map: {}", map_name);
+            }
+        }
+        LoadPhase::LoadingAssets => {
+            if let Some(ref handle) = loading.pending_handle {
+                let load_state = asset_server.recursive_dependency_load_state(handle);
+                match load_state {
+                    RecursiveDependencyLoadState::Loaded => {
+                        // All assets ready — spawn the map entity
+                        commands.spawn((
+                            TiledMap(handle.clone()),
+                            TilemapAnchor::Center,
+                        ));
+                        loading.phase = LoadPhase::Spawning;
+                        loading.status_text = "Spawning tiles...".into();
+                    }
+                    RecursiveDependencyLoadState::Failed(_) => {
+                        error!("Failed to load map assets");
+                        loading.phase = LoadPhase::Idle;
+                        loading.status_text.clear();
+                    }
+                    _ => {
+                        // Still loading
+                        loading.status_text = "Loading textures...".into();
+                    }
+                }
+            }
+        }
+        LoadPhase::Spawning => {
+            // Map entity spawning complete when children (layers) appear
+            for children in &maps {
+                if !children.is_empty() {
+                    loading.phase = LoadPhase::Idle;
+                    loading.status_text.clear();
+                    loading.pending_handle = None;
+                }
+            }
         }
     }
 }
@@ -287,7 +460,8 @@ fn sync_preview_to_panel(
 
     if let Some(panel) = tile_state.get_panel_mut::<MapPreviewPanel>("map_preview") {
         panel.egui_texture_id = state.egui_texture_id;
-        panel.is_loading = loading.loading;
+        panel.is_loading = loading.phase != LoadPhase::Idle;
+        panel.loading_status = loading.status_text.clone();
 
         // Resize render target if panel size changed significantly
         let panel_w = (panel.panel_size.x as u32).max(2);
@@ -334,6 +508,7 @@ struct MapPreviewPanel {
     width: u32,
     height: u32,
     is_loading: bool,
+    loading_status: String,
     // Input state written by UI, read by systems
     pending_scroll: f32,
     pending_drag: egui::Vec2,
@@ -437,7 +612,7 @@ impl WorkbenchPanel for MapPreviewPanel {
             painter.text(
                 center + egui::vec2(0.0, radius + 16.0),
                 egui::Align2::CENTER_TOP,
-                "Loading...",
+                &self.loading_status,
                 egui::FontId::proportional(14.0),
                 egui::Color32::WHITE,
             );
