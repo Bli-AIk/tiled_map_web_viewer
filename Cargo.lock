@@ -5493,6 +5493,7 @@ version = "0.1.0"
 dependencies = [
  "bevy",
  "bevy_ecs_tiled",
+ "bevy_egui",
  "bevy_workbench",
  "egui",
 ]
