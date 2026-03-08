@@ -6,7 +6,7 @@ authors = ["Bli_AIk"]
 license = "GPL-3.0-or-later"
 description = "A Tiled map viewer with WASM support for web deployment"
 repository = "https://github.com/Bli-AIk/tiled_map_web_viewer"
-exclude = ["assets/", "dist/", "dev/", "scripts/", ".github/", ".workbench/"]
+exclude = ["assets/", "dist/", "dev/", "scripts/", "patches/", ".github/", ".workbench/"]
 
 [dependencies]
 bevy = "0.18"
@@ -27,3 +27,6 @@ codegen-units = 1
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 getrandom = { version = "0.2", features = ["js"] }
 web-sys = { version = "0.3", features = ["Window", "Location", "XmlHttpRequest"] }
+
+[patch.crates-io]
+bevy_ecs_tiled = { path = "patches/bevy_ecs_tiled" }
