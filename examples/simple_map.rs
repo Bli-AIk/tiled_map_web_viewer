@@ -38,11 +38,7 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
     info!("Loading map: maps/001-3.tmx");
 }
 
-fn take_screenshot(
-    mut timer: ResMut<ScreenshotTimer>,
-    time: Res<Time>,
-    mut commands: Commands,
-) {
+fn take_screenshot(mut timer: ResMut<ScreenshotTimer>, time: Res<Time>, mut commands: Commands) {
     timer.0.tick(time.delta());
     if timer.0.just_finished() {
         info!("Taking screenshot...");
@@ -69,7 +65,10 @@ fn debug_tiles(
             info!("  Map: {:?} name={}", entity, name.as_str());
             if let Ok(children) = children_query.get(entity) {
                 for child in children.iter() {
-                    let child_name = name_query.get(child).map(|n| n.as_str().to_string()).unwrap_or_default();
+                    let child_name = name_query
+                        .get(child)
+                        .map(|n| n.as_str().to_string())
+                        .unwrap_or_default();
                     info!("    Child: {:?} name={}", child, child_name);
                 }
             }

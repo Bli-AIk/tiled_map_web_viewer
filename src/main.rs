@@ -10,8 +10,8 @@ use bevy_workbench::i18n::{I18n, Locale};
 use bevy_workbench::prelude::*;
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::RwLock;
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 /// Shared translation cache for closures/panels without World access.
 #[derive(Clone, Default)]
@@ -206,28 +206,28 @@ fn main() {
     };
 
     app.init_resource::<MapLoadRequest>()
-    .init_resource::<MapLoadingState>()
-    .init_resource::<PreviewInput>()
-    .init_resource::<CameraZoomState>()
-    .init_resource::<DevWindowsEnabled>()
-    .init_resource::<ScrollSensitivity>()
-    .init_resource::<MenuBarExtensions>()
-    .add_systems(Startup, setup)
-    .add_systems(
-        Update,
-        (
-            handle_map_load,
-            track_map_loading,
-            sync_preview_to_panel,
-            apply_camera_zoom,
-            apply_camera_pan,
-            handle_dev_menu_actions,
-        ),
-    )
-    .add_systems(
-        bevy_egui::EguiPrimaryContextPass,
-        sync_dev_menu.before(bevy_workbench::menu_bar::menu_bar_system),
-    );
+        .init_resource::<MapLoadingState>()
+        .init_resource::<PreviewInput>()
+        .init_resource::<CameraZoomState>()
+        .init_resource::<DevWindowsEnabled>()
+        .init_resource::<ScrollSensitivity>()
+        .init_resource::<MenuBarExtensions>()
+        .add_systems(Startup, setup)
+        .add_systems(
+            Update,
+            (
+                handle_map_load,
+                track_map_loading,
+                sync_preview_to_panel,
+                apply_camera_zoom,
+                apply_camera_pan,
+                handle_dev_menu_actions,
+            ),
+        )
+        .add_systems(
+            bevy_egui::EguiPrimaryContextPass,
+            sync_dev_menu.before(bevy_workbench::menu_bar::menu_bar_system),
+        );
 
     // Register panels with shared translations for dynamic titles
     let t_for_list = shared_translations.clone();
@@ -258,11 +258,7 @@ fn main() {
     app.register_settings_section(SettingsSection {
         label: shared_translations.read().unwrap().developer_label.clone(),
         ui_fn: Box::new(move |ui| {
-            let label = t_for_dev_section
-                .read()
-                .unwrap()
-                .allow_dev_windows
-                .clone();
+            let label = t_for_dev_section.read().unwrap().allow_dev_windows.clone();
             let mut val = toggle_for_settings.load(Ordering::Relaxed);
             if ui.checkbox(&mut val, label).changed() {
                 toggle_for_settings.store(val, Ordering::Relaxed);
@@ -277,7 +273,11 @@ fn main() {
     let pan_for_settings = pan_sens.clone();
     let t_for_sens_section = shared_translations.clone();
     app.register_settings_section(SettingsSection {
-        label: shared_translations.read().unwrap().sensitivity_label.clone(),
+        label: shared_translations
+            .read()
+            .unwrap()
+            .sensitivity_label
+            .clone(),
         ui_fn: Box::new(move |ui| {
             let t = t_for_sens_section.read().unwrap();
             let mut zoom_val = f32::from_bits(zoom_for_settings.load(Ordering::Relaxed));
@@ -328,12 +328,7 @@ fn setup(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
     let width = 1920u32;
     let height = 1080u32;
 
-    let image = Image::new_target_texture(
-        width,
-        height,
-        TextureFormat::Rgba8UnormSrgb,
-        None,
-    );
+    let image = Image::new_target_texture(width, height, TextureFormat::Rgba8UnormSrgb, None);
     let render_target = images.add(image);
 
     // Window camera for egui panels
@@ -474,10 +469,7 @@ fn track_map_loading(
                 match load_state {
                     RecursiveDependencyLoadState::Loaded => {
                         // All assets ready — spawn the map entity
-                        commands.spawn((
-                            TiledMap(handle.clone()),
-                            TilemapAnchor::Center,
-                        ));
+                        commands.spawn((TiledMap(handle.clone()), TilemapAnchor::Center));
                         loading.phase = LoadPhase::Spawning;
                         loading.status_text = i18n.t("loading-spawning");
                     }
@@ -596,8 +588,7 @@ fn sync_preview_to_panel(
     mut images: ResMut<Assets<Image>>,
 ) {
     if state.egui_texture_id.is_none() && state.render_target != Handle::default() {
-        let texture_id =
-            contexts.add_image(EguiTextureHandle::Strong(state.render_target.clone()));
+        let texture_id = contexts.add_image(EguiTextureHandle::Strong(state.render_target.clone()));
         state.egui_texture_id = Some(texture_id);
     }
 
@@ -614,12 +605,8 @@ fn sync_preview_to_panel(
             && (panel_w != state.width || panel_h != state.height)
             && panel.panel_size.x > 10.0
         {
-            let new_image = Image::new_target_texture(
-                panel_w,
-                panel_h,
-                TextureFormat::Rgba8UnormSrgb,
-                None,
-            );
+            let new_image =
+                Image::new_target_texture(panel_w, panel_h, TextureFormat::Rgba8UnormSrgb, None);
             if let Some(img) = images.get_mut(&state.render_target) {
                 *img = new_image;
             }
@@ -694,8 +681,7 @@ impl WorkbenchPanel for MapPreviewPanel {
         self.image_screen_size = display_size;
 
         // Allocate the image area as a sense rect for input handling
-        let (response, painter) =
-            ui.allocate_painter(display_size, egui::Sense::click_and_drag());
+        let (response, painter) = ui.allocate_painter(display_size, egui::Sense::click_and_drag());
         let rect = response.rect;
 
         // Draw the preview texture
@@ -744,15 +730,13 @@ impl WorkbenchPanel for MapPreviewPanel {
             let t = ui.input(|i| i.time) as f32;
             let segments = 8;
             for i in 0..segments {
-                let angle_start =
-                    t * 3.0 + (i as f32 / segments as f32) * std::f32::consts::TAU;
+                let angle_start = t * 3.0 + (i as f32 / segments as f32) * std::f32::consts::TAU;
                 let angle_end = angle_start + 0.3;
                 let alpha = ((i as f32 / segments as f32) * 255.0) as u8;
                 let color = egui::Color32::from_rgba_unmultiplied(255, 255, 255, alpha);
-                let p1 = center
-                    + egui::vec2(angle_start.cos() * radius, angle_start.sin() * radius);
-                let p2 = center
-                    + egui::vec2(angle_end.cos() * radius, angle_end.sin() * radius);
+                let p1 =
+                    center + egui::vec2(angle_start.cos() * radius, angle_start.sin() * radius);
+                let p2 = center + egui::vec2(angle_end.cos() * radius, angle_end.sin() * radius);
                 painter.line_segment([p1, p2], egui::Stroke::new(3.0, color));
             }
 

@@ -1797,7 +1797,9 @@ dependencies = [
 
 [[package]]
 name = "bevy_workbench"
-version = "0.3.0"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "582ac27ff4c1cab44843e8502de1005d84a144004027769832ed799d4e0d21c0"
 dependencies = [
  "bevy",
  "bevy-inspector-egui",
