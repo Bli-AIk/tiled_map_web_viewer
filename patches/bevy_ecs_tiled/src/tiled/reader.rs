@@ -42,7 +42,10 @@ impl<'a> tiled::ResourceReader for BytesResourceReader<'a> {
     fn read_from(&mut self, path: &Path) -> std::result::Result<Self::Resource, Self::Error> {
         if let Some(extension) = path.extension() {
             if extension == "tsx" || extension == "tx" {
-                let data = self.cache.get(path).ok_or_else(|| {
+                // Normalize path to resolve `..` components (e.g. `maps/../tilesets/x.tsx` → `tilesets/x.tsx`)
+                // so it matches the keys stored during pre-loading.
+                let normalized = normalize_path(path);
+                let data = self.cache.get(&normalized).ok_or_else(|| {
                     IoError::new(
                         ErrorKind::NotFound,
                         format!("Resource not pre-loaded: {}", path.display()),
@@ -77,6 +80,27 @@ fn extract_external_paths(xml: &str, base_dir: &Path) -> Vec<PathBuf> {
         }
     }
     paths
+}
+
+/// Normalizes a path by resolving `.` and `..` components in place,
+/// e.g. `maps/../tilesets/collision.tsx` → `tilesets/collision.tsx`.
+fn normalize_path(path: &Path) -> PathBuf {
+    let mut result = PathBuf::new();
+    for component in path.components() {
+        match component {
+            std::path::Component::ParentDir => {
+                result.pop();
+            }
+            std::path::Component::CurDir => {}
+            std::path::Component::Normal(s) => {
+                result.push(s);
+            }
+            _ => {
+                result.push(component);
+            }
+        }
+    }
+    result
 }
 
 /// Resolves a potentially relative path against a base directory,
