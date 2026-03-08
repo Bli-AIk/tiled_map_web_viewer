@@ -770,14 +770,17 @@ struct MapListPanel {
 }
 
 impl MapListPanel {
+    #[cfg(not(target_arch = "wasm32"))]
     fn scan_maps(&mut self) {
         let assets_dir = std::path::Path::new("assets");
         if assets_dir.exists() {
             self.walk_dir(assets_dir, assets_dir);
         }
         self.maps.sort();
+        self.scanned = true;
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     fn walk_dir(&mut self, dir: &std::path::Path, base: &std::path::Path) {
         let Ok(entries) = std::fs::read_dir(dir) else {
             return;
@@ -792,6 +795,35 @@ impl MapListPanel {
                 self.maps.push(rel.to_string_lossy().to_string());
             }
         }
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn scan_maps(&mut self) {
+        // In WASM, fetch manifest.txt via synchronous XHR
+        let Ok(xhr) = web_sys::XmlHttpRequest::new() else {
+            self.scanned = true;
+            return;
+        };
+        if xhr
+            .open_with_async("GET", "assets/manifest.txt", false)
+            .is_err()
+        {
+            self.scanned = true;
+            return;
+        }
+        if xhr.send().is_err() {
+            self.scanned = true;
+            return;
+        }
+        if let Ok(Some(text)) = xhr.response_text() {
+            self.maps = text
+                .lines()
+                .filter(|l| !l.trim().is_empty())
+                .map(|l| l.to_string())
+                .collect();
+            self.maps.sort();
+        }
+        self.scanned = true;
     }
 }
 
@@ -812,11 +844,16 @@ impl WorkbenchPanel for MapListPanel {
     fn ui_world(&mut self, ui: &mut egui::Ui, world: &mut World) {
         if !self.scanned {
             self.scan_maps();
-            self.scanned = true;
         }
 
         ui.heading("Maps");
         ui.separator();
+
+        if !self.scanned {
+            ui.spinner();
+            ui.label("Loading map list...");
+            return;
+        }
 
         if self.maps.is_empty() {
             ui.label("No .tmx files found in assets/");

@@ -1,0 +1,9 @@
+[build]
+target = "index.html"
+dist = "dist"
+
+# Copy the assets directory to dist/ for serving
+[[hooks]]
+stage = "pre_build"
+command = "python3"
+command_args = ["scripts/generate_manifest.py"]

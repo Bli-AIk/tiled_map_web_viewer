@@ -47,3 +47,4 @@ reports/
 # Ignore .cargo/ (local build optimization only)
 .cargo/
 
+assets/manifest.txt
