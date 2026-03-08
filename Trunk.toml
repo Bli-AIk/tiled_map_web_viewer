@@ -2,6 +2,9 @@
 target = "index.html"
 dist = "dist"
 
+[watch]
+ignore = ["assets/manifest.txt"]
+
 # Generate manifest.txt before building
 [[hooks]]
 stage = "pre_build"
