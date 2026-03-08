@@ -2,8 +2,8 @@
 target = "index.html"
 dist = "dist"
 
-# Copy the assets directory to dist/ for serving
+# Generate manifest.txt before building
 [[hooks]]
 stage = "pre_build"
 command = "python3"
-command_args = ["scripts/generate_manifest.py"]
+command_arguments = ["scripts/generate_manifest.py"]

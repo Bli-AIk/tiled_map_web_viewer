@@ -18,8 +18,8 @@ name = "tiled_map_web_viewer"
 path = "src/main.rs"
 
 [profile.release]
-opt-level = 3
-lto = true
+opt-level = "s"
+lto = "thin"
 codegen-units = 1
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
