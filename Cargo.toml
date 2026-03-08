@@ -1,0 +1,27 @@
+[package]
+name = "tiled_map_web_viewer"
+version = "0.1.0"
+edition = "2024"
+authors = ["Bli_AIk"]
+license = "GPL-3.0-or-later"
+description = "A Tiled map viewer with WASM support for web deployment"
+
+[dependencies]
+bevy = "0.18"
+bevy_workbench = "0.3"
+bevy_ecs_tiled = "0.11"
+bevy_egui = { version = "0.39", features = ["render"] }
+egui = "0.33"
+
+[[bin]]
+name = "tiled_map_web_viewer"
+path = "src/main.rs"
+
+[profile.release]
+opt-level = "s"
+lto = "thin"
+codegen-units = 1
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+getrandom = { version = "0.2", features = ["js"] }
+web-sys = { version = "0.3", features = ["Window", "Location", "XmlHttpRequest"] }
