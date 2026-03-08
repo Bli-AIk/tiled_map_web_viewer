@@ -5,6 +5,7 @@ edition = "2024"
 authors = ["Bli_AIk"]
 license = "GPL-3.0-or-later"
 description = "A Tiled map viewer with WASM support for web deployment"
+publish = false
 
 [dependencies]
 bevy = "0.18"
