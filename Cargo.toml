@@ -15,6 +15,10 @@ bevy_ecs_tiled = "0.11"
 bevy_egui = { version = "0.39", features = ["render"] }
 egui = "0.33"
 
+[lib]
+name = "tiled_map_web_viewer"
+path = "src/lib.rs"
+
 [[bin]]
 name = "tiled_map_web_viewer"
 path = "src/main.rs"
