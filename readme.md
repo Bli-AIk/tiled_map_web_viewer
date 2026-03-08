@@ -18,6 +18,12 @@ It is designed for open-source game map library maintainers who want to provide 
 
 With `tiled_map_web_viewer`, you only need to deploy a WASM build alongside your map assets to give contributors and users a visual browser for your map library — no desktop installation required.
 
+## Why Tiled?
+
+[Tiled](https://www.mapeditor.org/) is a free, open-source 2D map editor that has become the de facto standard in the indie and open-source game development community. Its `.tmx` map format is supported by virtually every major 2D game engine and framework — including Godot, Unity, Phaser, LÖVE, pygame, libGDX, and many more.
+
+By choosing Tiled as the base format, `tiled_map_web_viewer` can **adapt to the diverse creation toolchains used across different game communities**. Whether your contributors use Godot, RPG Maker (with TMX export), or Tiled itself, as long as maps can be exported to `.tmx`, they can be previewed here. This makes it an ideal tool for open-source map library projects that serve multiple engines and workflows.
+
 ## Features
 
 * **Map List Panel** — Browse all available maps in the library and click to preview
