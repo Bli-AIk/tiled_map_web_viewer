@@ -6,7 +6,57 @@ use bevy_ecs_tiled::prelude::*;
 use bevy_egui::{EguiContexts, EguiTextureHandle};
 use bevy_workbench::console::console_log_layer;
 use bevy_workbench::dock::WorkbenchPanel;
+use bevy_workbench::i18n::{I18n, Locale};
 use bevy_workbench::prelude::*;
+
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::RwLock;
+
+/// Shared translation cache for closures/panels without World access.
+#[derive(Clone, Default)]
+#[allow(dead_code)]
+struct Translations {
+    // Settings
+    allow_dev_windows: String,
+    zoom_sensitivity: String,
+    pan_sensitivity: String,
+    developer_label: String,
+    sensitivity_label: String,
+    // Dev menu
+    dev_windows_menu: String,
+    inspector: String,
+    console: String,
+    // Panel titles
+    map_list: String,
+    map_preview: String,
+    // Loading states
+    loading_cleanup: String,
+    loading_textures: String,
+    loading_spawning: String,
+}
+
+impl Translations {
+    fn from_i18n(i18n: &I18n) -> Self {
+        Self {
+            allow_dev_windows: i18n.t("settings-allow-dev-windows"),
+            zoom_sensitivity: i18n.t("settings-zoom-sensitivity"),
+            pan_sensitivity: i18n.t("settings-pan-sensitivity"),
+            developer_label: i18n.t("settings-developer"),
+            sensitivity_label: i18n.t("settings-sensitivity"),
+            dev_windows_menu: i18n.t("menu-dev-windows"),
+            inspector: i18n.t("menu-dev-inspector"),
+            console: i18n.t("menu-dev-console"),
+            map_list: i18n.t("panel-map-list"),
+            map_preview: i18n.t("panel-map-preview"),
+            loading_cleanup: i18n.t("loading-cleanup"),
+            loading_textures: i18n.t("loading-textures"),
+            loading_spawning: i18n.t("loading-spawning"),
+        }
+    }
+}
+
+type SharedTranslations = Arc<RwLock<Translations>>;
 
 // --- Resources ---
 
@@ -101,9 +151,6 @@ impl Default for ScrollSensitivity {
     }
 }
 
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
-
 impl Default for DevWindowsEnabled {
     fn default() -> Self {
         Self(false)
@@ -143,8 +190,22 @@ fn main() {
             ..default()
         },
     })
-    .add_plugins(TiledPlugin::default())
-    .init_resource::<MapLoadRequest>()
+    .add_plugins(TiledPlugin::default());
+
+    // Register locale FTL sources with bevy_workbench I18n
+    {
+        let mut i18n = app.world_mut().resource_mut::<I18n>();
+        i18n.add_custom_source(Locale::En, include_str!("../locales/en.ftl"));
+        i18n.add_custom_source(Locale::ZhCn, include_str!("../locales/zh-CN.ftl"));
+    }
+
+    // Build initial shared translations from current locale
+    let shared_translations: SharedTranslations = {
+        let i18n = app.world().resource::<I18n>();
+        Arc::new(RwLock::new(Translations::from_i18n(i18n)))
+    };
+
+    app.init_resource::<MapLoadRequest>()
     .init_resource::<MapLoadingState>()
     .init_resource::<PreviewInput>()
     .init_resource::<CameraZoomState>()
@@ -168,8 +229,17 @@ fn main() {
         sync_dev_menu.before(bevy_workbench::menu_bar::menu_bar_system),
     );
 
-    app.register_panel(MapListPanel::default());
-    app.register_panel(MapPreviewPanel::default());
+    // Register panels with shared translations for dynamic titles
+    let t_for_list = shared_translations.clone();
+    app.register_panel(MapListPanel {
+        translations: t_for_list,
+        ..default()
+    });
+    let t_for_preview = shared_translations.clone();
+    app.register_panel(MapPreviewPanel {
+        translations: t_for_preview,
+        ..default()
+    });
 
     // Hide Inspector and Console from the Window menu and default layout
     {
@@ -182,29 +252,37 @@ fn main() {
         tile_state.set_default_hidden("workbench_console");
     }
 
-    // Add "Allow Developer Windows" checkbox to Settings
+    // Settings: Developer section
     let toggle_for_settings = dev_toggle.clone();
-    let zoom_sens = Arc::new(AtomicU32::new(0.01_f32.to_bits()));
-    let pan_sens = Arc::new(AtomicU32::new(1.0_f32.to_bits()));
-
-    let zoom_for_settings = zoom_sens.clone();
-    let pan_for_settings = pan_sens.clone();
+    let t_for_dev_section = shared_translations.clone();
     app.register_settings_section(SettingsSection {
-        label: "Developer".into(),
+        label: shared_translations.read().unwrap().developer_label.clone(),
         ui_fn: Box::new(move |ui| {
+            let label = t_for_dev_section
+                .read()
+                .unwrap()
+                .allow_dev_windows
+                .clone();
             let mut val = toggle_for_settings.load(Ordering::Relaxed);
-            if ui.checkbox(&mut val, "允许使用开发者窗口").changed() {
+            if ui.checkbox(&mut val, label).changed() {
                 toggle_for_settings.store(val, Ordering::Relaxed);
             }
         }),
     });
 
+    // Settings: Sensitivity section
+    let zoom_sens = Arc::new(AtomicU32::new(0.01_f32.to_bits()));
+    let pan_sens = Arc::new(AtomicU32::new(1.0_f32.to_bits()));
+    let zoom_for_settings = zoom_sens.clone();
+    let pan_for_settings = pan_sens.clone();
+    let t_for_sens_section = shared_translations.clone();
     app.register_settings_section(SettingsSection {
-        label: "操作灵敏度".into(),
+        label: shared_translations.read().unwrap().sensitivity_label.clone(),
         ui_fn: Box::new(move |ui| {
+            let t = t_for_sens_section.read().unwrap();
             let mut zoom_val = f32::from_bits(zoom_for_settings.load(Ordering::Relaxed));
             if ui
-                .add(egui::Slider::new(&mut zoom_val, 0.001..=0.05).text("缩放灵敏度"))
+                .add(egui::Slider::new(&mut zoom_val, 0.001..=0.05).text(&t.zoom_sensitivity))
                 .changed()
             {
                 zoom_for_settings.store(zoom_val.to_bits(), Ordering::Relaxed);
@@ -212,7 +290,7 @@ fn main() {
 
             let mut pan_val = f32::from_bits(pan_for_settings.load(Ordering::Relaxed));
             if ui
-                .add(egui::Slider::new(&mut pan_val, 0.1..=3.0).text("平移灵敏度"))
+                .add(egui::Slider::new(&mut pan_val, 0.1..=3.0).text(&t.pan_sensitivity))
                 .changed()
             {
                 pan_for_settings.store(pan_val.to_bits(), Ordering::Relaxed);
@@ -220,17 +298,26 @@ fn main() {
         }),
     });
 
-    // System to sync the atomic toggles → resources
+    // System to sync atomic values → resources and update translations on locale change
     let toggle_for_system = dev_toggle.clone();
     let zoom_for_system = zoom_sens.clone();
     let pan_for_system = pan_sens.clone();
+    let t_for_sync = shared_translations.clone();
     app.add_systems(
         Update,
         move |mut dev_enabled: ResMut<DevWindowsEnabled>,
-              mut sensitivity: ResMut<ScrollSensitivity>| {
+              mut sensitivity: ResMut<ScrollSensitivity>,
+              i18n: Res<I18n>| {
             dev_enabled.0 = toggle_for_system.load(Ordering::Relaxed);
             sensitivity.zoom = f32::from_bits(zoom_for_system.load(Ordering::Relaxed));
             sensitivity.pan = f32::from_bits(pan_for_system.load(Ordering::Relaxed));
+
+            // Refresh translations if locale changed
+            if i18n.is_changed() {
+                if let Ok(mut t) = t_for_sync.write() {
+                    *t = Translations::from_i18n(&i18n);
+                }
+            }
         },
     );
 
@@ -275,32 +362,36 @@ fn setup(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
 /// Syncs the "Developer Windows" custom menu to the menu bar.
 fn sync_dev_menu(
     dev_enabled: Res<DevWindowsEnabled>,
+    i18n: Res<I18n>,
     mut extensions: ResMut<MenuBarExtensions>,
     tile_state: Res<bevy_workbench::dock::TileLayoutState>,
 ) {
     let inspector_visible = tile_state.is_panel_visible("workbench_inspector");
     let console_visible = tile_state.is_panel_visible("workbench_console");
 
+    let inspector_label = i18n.t("menu-dev-inspector");
+    let console_label = i18n.t("menu-dev-console");
+
     extensions.custom_menus = vec![CustomMenu {
         id: "dev_windows",
-        label: "Developer Windows".into(),
+        label: i18n.t("menu-dev-windows"),
         enabled: dev_enabled.0,
         items: vec![
             MenuExtItem {
                 id: "toggle_inspector",
                 label: if inspector_visible {
-                    "✓ Inspector".into()
+                    format!("✓ {inspector_label}")
                 } else {
-                    "  Inspector".into()
+                    format!("  {inspector_label}")
                 },
                 enabled: true,
             },
             MenuExtItem {
                 id: "toggle_console",
                 label: if console_visible {
-                    "✓ Console".into()
+                    format!("✓ {console_label}")
                 } else {
-                    "  Console".into()
+                    format!("  {console_label}")
                 },
                 enabled: true,
             },
@@ -339,6 +430,7 @@ fn handle_map_load(
     mut commands: Commands,
     mut load_request: ResMut<MapLoadRequest>,
     mut loading: ResMut<MapLoadingState>,
+    i18n: Res<I18n>,
     existing_maps: Query<Entity, With<TiledMap>>,
 ) {
     let Some(map_name) = load_request.map_to_load.take() else {
@@ -353,7 +445,7 @@ fn handle_map_load(
     loading.phase = LoadPhase::Cleanup;
     loading.current_map = Some(map_name);
     loading.pending_handle = None;
-    loading.status_text = "Cleaning up...".into();
+    loading.status_text = i18n.t("loading-cleanup");
 }
 
 /// Phase 2+: Drive the loading state machine.
@@ -361,6 +453,7 @@ fn track_map_loading(
     mut commands: Commands,
     mut loading: ResMut<MapLoadingState>,
     asset_server: Res<AssetServer>,
+    i18n: Res<I18n>,
     maps: Query<&Children, With<TiledMap>>,
 ) {
     match loading.phase {
@@ -371,7 +464,7 @@ fn track_map_loading(
                 let handle: Handle<TiledMapAsset> = asset_server.load(map_name);
                 loading.pending_handle = Some(handle);
                 loading.phase = LoadPhase::LoadingAssets;
-                loading.status_text = "Loading map assets...".into();
+                loading.status_text = i18n.t("loading-textures");
                 info!("Loading map: {}", map_name);
             }
         }
@@ -386,7 +479,7 @@ fn track_map_loading(
                             TilemapAnchor::Center,
                         ));
                         loading.phase = LoadPhase::Spawning;
-                        loading.status_text = "Spawning tiles...".into();
+                        loading.status_text = i18n.t("loading-spawning");
                     }
                     RecursiveDependencyLoadState::Failed(_) => {
                         error!("Failed to load map assets");
@@ -395,7 +488,7 @@ fn track_map_loading(
                     }
                     _ => {
                         // Still loading
-                        loading.status_text = "Loading textures...".into();
+                        loading.status_text = i18n.t("loading-textures");
                     }
                 }
             }
@@ -554,6 +647,7 @@ fn sync_preview_to_panel(
 
 #[derive(Default)]
 struct MapPreviewPanel {
+    translations: SharedTranslations,
     egui_texture_id: Option<egui::TextureId>,
     width: u32,
     height: u32,
@@ -575,7 +669,10 @@ impl WorkbenchPanel for MapPreviewPanel {
     }
 
     fn title(&self) -> String {
-        "Map Preview".into()
+        self.translations
+            .read()
+            .map(|t| t.map_preview.clone())
+            .unwrap_or_else(|_| "Map Preview".into())
     }
 
     fn ui(&mut self, ui: &mut egui::Ui) {
@@ -685,6 +782,7 @@ impl WorkbenchPanel for MapPreviewPanel {
 
 #[derive(Default)]
 struct MapListPanel {
+    translations: SharedTranslations,
     maps: Vec<String>,
     scanned: bool,
     selected: Option<String>,
@@ -722,7 +820,10 @@ impl WorkbenchPanel for MapListPanel {
     }
 
     fn title(&self) -> String {
-        "Map List".into()
+        self.translations
+            .read()
+            .map(|t| t.map_list.clone())
+            .unwrap_or_else(|_| "Map List".into())
     }
 
     fn ui(&mut self, _ui: &mut egui::Ui) {}
