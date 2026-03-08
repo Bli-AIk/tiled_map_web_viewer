@@ -785,12 +785,9 @@ dependencies = [
 [[package]]
 name = "bevy_ecs_tiled"
 version = "0.11.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8e1cb404b81cb766712b1d56d8d5f3ed39e0d5234a7763d56f7870785be911a7"
 dependencies = [
  "bevy",
  "bevy_ecs_tilemap",
- "futures-lite",
  "geo",
  "log",
  "regex",
