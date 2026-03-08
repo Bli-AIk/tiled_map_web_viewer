@@ -2,8 +2,7 @@ name: Deploy to GitHub Pages
 
 on:
   push:
-    tags:
-      - 'v*'
+    branches: [ main ]
   workflow_dispatch:
 
 permissions:
@@ -36,7 +35,7 @@ jobs:
         run: cargo install trunk
 
       - name: Build WASM release
-        run: trunk build --release
+        run: trunk build --release --public-url /tiled_map_web_viewer/
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
