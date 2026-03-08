@@ -1,4 +1,4 @@
-use bevy::asset::RecursiveDependencyLoadState;
+use bevy::asset::{AssetMetaCheck, RecursiveDependencyLoadState};
 use bevy::camera::RenderTarget;
 use bevy::prelude::*;
 use bevy::render::render_resource::TextureFormat;
@@ -162,6 +162,10 @@ fn main() {
     let dev_toggle = Arc::new(AtomicBool::new(false));
     app.add_plugins(
         DefaultPlugins
+            .set(AssetPlugin {
+                meta_check: AssetMetaCheck::Never,
+                ..default()
+            })
             .set(WindowPlugin {
                 primary_window: Some(Window {
                     title: "Tiled Map Web Viewer".into(),
