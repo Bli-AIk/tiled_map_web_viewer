@@ -1,5 +1,5 @@
 use bevy::prelude::*;
-use bevy::render::view::screenshot::{Screenshot, ScreenshotCaptured, save_to_disk};
+use bevy::render::view::screenshot::{Screenshot, save_to_disk};
 use bevy_ecs_tiled::prelude::*;
 
 fn main() {

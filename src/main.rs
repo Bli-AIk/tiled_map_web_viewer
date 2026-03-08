@@ -130,7 +130,7 @@ impl Default for CameraZoomState {
 }
 
 /// Whether the developer windows menu is enabled.
-#[derive(Resource)]
+#[derive(Resource, Default)]
 struct DevWindowsEnabled(bool);
 
 /// Scroll sensitivity configuration.
@@ -148,12 +148,6 @@ impl Default for ScrollSensitivity {
             zoom: 0.01,
             pan: 1.0,
         }
-    }
-}
-
-impl Default for DevWindowsEnabled {
-    fn default() -> Self {
-        Self(false)
     }
 }
 
@@ -313,10 +307,10 @@ fn main() {
             sensitivity.pan = f32::from_bits(pan_for_system.load(Ordering::Relaxed));
 
             // Refresh translations if locale changed
-            if i18n.is_changed() {
-                if let Ok(mut t) = t_for_sync.write() {
-                    *t = Translations::from_i18n(&i18n);
-                }
+            if i18n.is_changed()
+                && let Ok(mut t) = t_for_sync.write()
+            {
+                *t = Translations::from_i18n(&i18n);
             }
         },
     );
@@ -530,23 +524,23 @@ fn apply_camera_zoom(
 
     // Zoom centered on cursor: adjust camera position so the world point
     // under the cursor stays fixed.
-    if let Some(uv) = input.cursor_uv {
-        if (old_scale - zoom_state.current_scale).abs() > 0.0001 {
-            let rt_w = preview.width as f32;
-            let rt_h = preview.height as f32;
-            // Cursor offset from center of viewport in NDC-like coords [-0.5, 0.5]
-            let cx = uv.x - 0.5;
-            let cy = -(uv.y - 0.5); // Flip Y (screen Y is down, world Y is up)
+    if let Some(uv) = input.cursor_uv
+        && (old_scale - zoom_state.current_scale).abs() > 0.0001
+    {
+        let rt_w = preview.width as f32;
+        let rt_h = preview.height as f32;
+        // Cursor offset from center of viewport in NDC-like coords [-0.5, 0.5]
+        let cx = uv.x - 0.5;
+        let cy = -(uv.y - 0.5); // Flip Y (screen Y is down, world Y is up)
 
-            let world_offset_x = cx * rt_w * old_scale;
-            let world_offset_y = cy * rt_h * old_scale;
+        let world_offset_x = cx * rt_w * old_scale;
+        let world_offset_y = cy * rt_h * old_scale;
 
-            let new_world_offset_x = cx * rt_w * zoom_state.current_scale;
-            let new_world_offset_y = cy * rt_h * zoom_state.current_scale;
+        let new_world_offset_x = cx * rt_w * zoom_state.current_scale;
+        let new_world_offset_y = cy * rt_h * zoom_state.current_scale;
 
-            transform.translation.x += world_offset_x - new_world_offset_x;
-            transform.translation.y += world_offset_y - new_world_offset_y;
-        }
+        transform.translation.x += world_offset_x - new_world_offset_x;
+        transform.translation.y += world_offset_y - new_world_offset_y;
     }
 }
 
@@ -789,10 +783,10 @@ impl MapListPanel {
             let path = entry.path();
             if path.is_dir() {
                 self.walk_dir(&path, base);
-            } else if path.extension().is_some_and(|ext| ext == "tmx") {
-                if let Ok(rel) = path.strip_prefix(base) {
-                    self.maps.push(rel.to_string_lossy().to_string());
-                }
+            } else if path.extension().is_some_and(|ext| ext == "tmx")
+                && let Ok(rel) = path.strip_prefix(base)
+            {
+                self.maps.push(rel.to_string_lossy().to_string());
             }
         }
     }
