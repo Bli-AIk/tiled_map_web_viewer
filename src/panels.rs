@@ -344,17 +344,7 @@ impl WorkbenchPanel for MapListPanel {
 
     fn ui_world(&mut self, ui: &mut egui::Ui, world: &mut World) {
         if !self.scanned {
-            if let Some(mut overlay) =
-                world.get_resource_mut::<crate::web_loading::WebLoadingOverlayState>()
-            {
-                overlay.show_with(&self.translations, |t| t.list_loading_maps.clone(), 0.45);
-            }
             self.scan_maps();
-            if let Some(mut overlay) =
-                world.get_resource_mut::<crate::web_loading::WebLoadingOverlayState>()
-            {
-                overlay.finish();
-            }
         }
 
         let visible_sections = world.resource::<SectionVisibilityState>().0.clone();
