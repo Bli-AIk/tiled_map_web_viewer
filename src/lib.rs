@@ -40,6 +40,19 @@ pub struct MapCategory {
     pub key: String,
 }
 
+/// One map-list panel shown in the dock layout.
+#[derive(Clone, Debug, Default)]
+pub struct MapListView {
+    /// Stable panel id used by the dock layout.
+    pub id: String,
+    /// Title shown on the panel tab.
+    pub title: String,
+    /// Whether this panel should be visible by default.
+    pub default_visible: bool,
+    /// Optional manifest section key to filter this panel by.
+    pub section_filter: Option<String>,
+}
+
 /// One compact badge rendered next to a map entry.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct MapBadge {
@@ -93,6 +106,9 @@ pub struct ViewerConfig {
     pub title: String,
     /// Initial window resolution (width, height).
     pub resolution: (u32, u32),
+    /// Map list panels shown in the dock. When empty, the viewer falls back
+    /// to a single built-in "Map List" panel.
+    pub map_lists: Vec<MapListView>,
     /// Top-level sections used to organize manifest entries.
     pub sections: Vec<MapSection>,
     /// Map categories. When non-empty the map list panel groups maps
@@ -109,6 +125,7 @@ impl Default for ViewerConfig {
         Self {
             title: "Tiled Map Web Viewer".into(),
             resolution: (1280, 720),
+            map_lists: vec![],
             sections: vec![],
             categories: vec![],
             manifest_path: "assets/manifest.json".into(),
@@ -185,6 +202,19 @@ pub fn run(config: ViewerConfig) {
     let sections = config.sections.clone();
     let categories = config.categories.clone();
     let manifest_path = config.manifest_path.clone();
+    let map_lists = if config.map_lists.is_empty() {
+        vec![MapListView {
+            id: "map_list".into(),
+            title: shared_translations
+                .read()
+                .map(|t| t.map_list.clone())
+                .unwrap_or_else(|_| "Map List".into()),
+            default_visible: true,
+            section_filter: None,
+        }]
+    } else {
+        config.map_lists.clone()
+    };
 
     app.init_resource::<MapLoadRequest>()
         .init_resource::<MapLoadingState>()
@@ -214,13 +244,16 @@ pub fn run(config: ViewerConfig) {
         );
 
     // Register panels
-    let t_for_list = shared_translations.clone();
-    app.register_panel(MapListPanel::new(
-        t_for_list,
-        sections,
-        categories,
-        manifest_path,
-    ));
+    for map_list in map_lists {
+        let t_for_list = shared_translations.clone();
+        app.register_panel(MapListPanel::new(
+            t_for_list,
+            sections.clone(),
+            categories.clone(),
+            manifest_path.clone(),
+            map_list,
+        ));
+    }
     let t_for_preview = shared_translations.clone();
     app.register_panel(MapPreviewPanel::new(t_for_preview));
     let t_for_details = shared_translations.clone();
