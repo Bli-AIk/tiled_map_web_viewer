@@ -5488,7 +5488,7 @@ dependencies = [
 
 [[package]]
 name = "tiled_map_web_viewer"
-version = "0.1.2"
+version = "0.2.0"
 dependencies = [
  "bevy",
  "bevy_ecs_tiled",
@@ -5496,6 +5496,8 @@ dependencies = [
  "bevy_workbench",
  "egui",
  "getrandom 0.2.17",
+ "serde",
+ "serde_json",
  "web-sys",
 ]
 

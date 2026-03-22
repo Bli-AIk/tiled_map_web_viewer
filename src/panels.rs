@@ -1,7 +1,10 @@
 use bevy::prelude::*;
 use bevy_workbench::dock::WorkbenchPanel;
 
-use crate::{MapCategory, MapLoadRequest, SharedTranslations};
+use crate::{
+    MapCategory, MapLoadRequest, MapManifest, MapManifestEntry, SelectedMapDetails,
+    SharedTranslations, ShowRawMapsEnabled,
+};
 
 #[derive(Default)]
 pub(crate) struct MapPreviewPanel {
@@ -131,110 +134,226 @@ impl WorkbenchPanel for MapPreviewPanel {
     }
 }
 
+#[derive(Default)]
+pub(crate) struct MapDetailsPanel {
+    pub(crate) translations: SharedTranslations,
+}
+
+impl MapDetailsPanel {
+    pub(crate) fn new(translations: SharedTranslations) -> Self {
+        Self { translations }
+    }
+}
+
+impl WorkbenchPanel for MapDetailsPanel {
+    fn id(&self) -> &str {
+        "map_details"
+    }
+
+    fn title(&self) -> String {
+        self.translations
+            .read()
+            .map(|t| t.map_details.clone())
+            .unwrap_or_else(|_| "Map Details".into())
+    }
+
+    fn ui(&mut self, _ui: &mut egui::Ui) {}
+
+    fn ui_world(&mut self, ui: &mut egui::Ui, world: &mut World) {
+        let maybe_selected = world.resource::<SelectedMapDetails>().0.clone();
+        let Ok(t) = self.translations.read() else {
+            ui.label("Translations unavailable");
+            return;
+        };
+
+        let Some(selected) = maybe_selected else {
+            ui.label(&t.details_no_selection);
+            return;
+        };
+
+        ui.heading(&selected.room_name);
+        ui.separator();
+        details_row(ui, &t.details_path, &selected.path);
+        details_row(ui, &t.details_source, &selected.source);
+        details_row(ui, &t.details_dataset, &selected.dataset);
+        details_row(
+            ui,
+            &t.details_visual_status,
+            selected.visual_status.as_deref().unwrap_or("—"),
+        );
+        details_row(
+            ui,
+            &t.details_logic_status,
+            selected.logic_status.as_deref().unwrap_or("—"),
+        );
+        details_row(
+            ui,
+            &t.details_scope,
+            selected.scope.as_deref().unwrap_or("—"),
+        );
+
+        ui.separator();
+        ui.label(egui::RichText::new(&t.details_notes).strong());
+        ui.label(selected.notes.as_deref().unwrap_or("—"));
+    }
+
+    fn needs_world(&self) -> bool {
+        true
+    }
+
+    fn default_visible(&self) -> bool {
+        true
+    }
+}
+
+fn details_row(ui: &mut egui::Ui, label: &str, value: &str) {
+    ui.horizontal_wrapped(|ui| {
+        ui.label(egui::RichText::new(label).strong());
+        ui.label(value);
+    });
+}
+
 // --- Map List Panel ---
 
 #[derive(Default)]
 pub(crate) struct MapListPanel {
     pub(crate) translations: SharedTranslations,
     pub(crate) categories: Vec<MapCategory>,
-    maps: Vec<String>,
+    manifest_path: String,
+    maps: Vec<MapManifestEntry>,
     scanned: bool,
     selected: Option<String>,
 }
 
 impl MapListPanel {
-    pub(crate) fn new(translations: SharedTranslations, categories: Vec<MapCategory>) -> Self {
+    pub(crate) fn new(
+        translations: SharedTranslations,
+        categories: Vec<MapCategory>,
+        manifest_path: String,
+    ) -> Self {
         Self {
             translations,
             categories,
+            manifest_path,
             ..Default::default()
         }
     }
 
     #[cfg(not(target_arch = "wasm32"))]
     fn scan_maps(&mut self) {
-        let assets_dir = std::path::Path::new("assets");
-        if assets_dir.exists() {
-            self.walk_dir(assets_dir, assets_dir);
+        if !self.load_manifest_from_json_native() {
+            self.maps = self.scan_maps_from_assets_native();
         }
-        self.maps.sort();
+        self.maps.sort_by(|a, b| a.path.cmp(&b.path));
         self.scanned = true;
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    fn walk_dir(&mut self, dir: &std::path::Path, base: &std::path::Path) {
-        let Ok(entries) = std::fs::read_dir(dir) else {
-            return;
+    fn load_manifest_from_json_native(&mut self) -> bool {
+        let Ok(text) = std::fs::read_to_string(&self.manifest_path) else {
+            return false;
         };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                self.walk_dir(&path, base);
-            } else if path.extension().is_some_and(|ext| ext == "tmx")
-                && let Ok(rel) = path.strip_prefix(base)
-            {
-                self.maps.push(rel.to_string_lossy().to_string());
-            }
+        let Ok(manifest) = serde_json::from_str::<MapManifest>(&text) else {
+            return false;
+        };
+        self.maps = manifest.maps;
+        true
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn scan_maps_from_assets_native(&self) -> Vec<MapManifestEntry> {
+        let assets_dir = std::path::Path::new("assets");
+        let mut maps = Vec::new();
+        if assets_dir.exists() {
+            walk_dir_collect(assets_dir, assets_dir, &mut maps);
         }
+        maps
     }
 
     #[cfg(target_arch = "wasm32")]
     fn scan_maps(&mut self) {
+        if !self.load_manifest_from_json_wasm() {
+            self.load_manifest_from_txt_wasm();
+        }
+        self.maps.sort_by(|a, b| a.path.cmp(&b.path));
+        self.scanned = true;
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn load_manifest_from_json_wasm(&mut self) -> bool {
         let Ok(xhr) = web_sys::XmlHttpRequest::new() else {
-            self.scanned = true;
-            return;
+            return false;
         };
         if xhr
-            .open_with_async("GET", "assets/manifest.txt", false)
+            .open_with_async("GET", &self.manifest_path, false)
             .is_err()
         {
-            self.scanned = true;
+            return false;
+        }
+        if xhr.send().is_err() {
+            return false;
+        }
+        let Ok(Some(text)) = xhr.response_text() else {
+            return false;
+        };
+        let Ok(manifest) = serde_json::from_str::<MapManifest>(&text) else {
+            return false;
+        };
+        self.maps = manifest.maps;
+        true
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn load_manifest_from_txt_wasm(&mut self) {
+        let txt_path = self.manifest_path.replace(".json", ".txt");
+        let Ok(xhr) = web_sys::XmlHttpRequest::new() else {
+            return;
+        };
+        if xhr.open_with_async("GET", &txt_path, false).is_err() {
             return;
         }
         if xhr.send().is_err() {
-            self.scanned = true;
             return;
         }
         if let Ok(Some(text)) = xhr.response_text() {
             self.maps = text
                 .lines()
                 .filter(|l| !l.trim().is_empty())
-                .map(|l| l.to_string())
+                .map(default_entry_from_path)
                 .collect();
-            self.maps.sort();
         }
-        self.scanned = true;
     }
+}
 
-    /// Returns maps grouped by category. The last group contains uncategorized maps.
-    fn grouped_maps(&self) -> Vec<(&str, Vec<&str>)> {
-        let mut groups: Vec<(&str, Vec<&str>)> = self
-            .categories
-            .iter()
-            .map(|c| (c.name.as_str(), Vec::new()))
-            .collect();
-        let mut uncategorized: Vec<&str> = Vec::new();
+fn grouped_maps_for_categories<'a>(
+    categories: &'a [MapCategory],
+    entries: Vec<&'a MapManifestEntry>,
+) -> Vec<(String, Vec<&'a MapManifestEntry>)> {
+    let mut groups: Vec<(String, Vec<&MapManifestEntry>)> = categories
+        .iter()
+        .map(|c| (c.name.clone(), Vec::new()))
+        .collect();
+    let mut uncategorized: Vec<&MapManifestEntry> = Vec::new();
 
-        for map in &self.maps {
-            let mut found = false;
-            for (i, cat) in self.categories.iter().enumerate() {
-                if map.starts_with(&cat.directory) && map[cat.directory.len()..].starts_with('/') {
-                    groups[i].1.push(map.as_str());
-                    found = true;
-                    break;
-                }
-            }
-            if !found {
-                uncategorized.push(map.as_str());
+    for entry in entries {
+        let mut found = false;
+        for (i, cat) in categories.iter().enumerate() {
+            if entry.dataset == cat.directory {
+                groups[i].1.push(entry);
+                found = true;
+                break;
             }
         }
-
-        if !uncategorized.is_empty() {
-            groups.push(("Other", uncategorized));
+        if !found {
+            uncategorized.push(entry);
         }
-
-        groups
     }
+
+    if !uncategorized.is_empty() {
+        groups.push(("Other".into(), uncategorized));
+    }
+
+    groups
 }
 
 impl WorkbenchPanel for MapListPanel {
@@ -256,68 +375,75 @@ impl WorkbenchPanel for MapListPanel {
             self.scan_maps();
         }
 
-        ui.heading("Maps");
+        let show_raw_maps = world.resource::<ShowRawMapsEnabled>().0;
+
+        let Ok(t) = self.translations.read() else {
+            ui.label("Translations unavailable");
+            return;
+        };
+        let map_list = t.map_list.clone();
+        let list_loading_maps = t.list_loading_maps.clone();
+        let list_no_maps = t.list_no_maps.clone();
+        let list_curated_maps = t.list_curated_maps.clone();
+        let list_raw_maps = t.list_raw_maps.clone();
+        let list_missing_metadata = t.list_missing_metadata.clone();
+        drop(t);
+
+        ui.heading(&map_list);
         ui.separator();
 
         if !self.scanned {
             ui.spinner();
-            ui.label("Loading map list...");
+            ui.label(&list_loading_maps);
             return;
         }
 
         if self.maps.is_empty() {
-            ui.label("No .tmx files found in assets/");
+            ui.label(&list_no_maps);
             return;
         }
 
-        egui::ScrollArea::vertical().show(ui, |ui| {
-            let mut load_target = None;
+        let curated_entries: Vec<&MapManifestEntry> = self
+            .maps
+            .iter()
+            .filter(|entry| entry.source == "curated")
+            .collect();
+        let raw_entries: Vec<&MapManifestEntry> = self
+            .maps
+            .iter()
+            .filter(|entry| entry.source == "raw")
+            .collect();
+        let curated_groups = grouped_maps_for_categories(&self.categories, curated_entries);
+        let raw_groups = grouped_maps_for_categories(&self.categories, raw_entries);
 
-            if self.categories.is_empty() {
-                // Flat list
-                for map_name in &self.maps {
-                    let is_selected = self.selected.as_deref() == Some(map_name);
-                    let text = if is_selected {
-                        egui::RichText::new(map_name).strong()
-                    } else {
-                        egui::RichText::new(map_name)
-                    };
-                    if ui.selectable_label(is_selected, text).clicked() && !is_selected {
-                        load_target = Some(map_name.clone());
-                    }
-                }
-            } else {
-                // Grouped by category
-                let groups = self.grouped_maps();
-                for (group_name, maps) in &groups {
-                    if maps.is_empty() {
-                        continue;
-                    }
-                    let header = format!("{} ({})", group_name, maps.len());
-                    egui::CollapsingHeader::new(header)
-                        .default_open(false)
-                        .show(ui, |ui| {
-                            for map_name in maps {
-                                let is_selected = self.selected.as_deref() == Some(*map_name);
-                                // Show just the filename, not the full path
-                                let display_name = map_name.rsplit('/').next().unwrap_or(map_name);
-                                let text = if is_selected {
-                                    egui::RichText::new(display_name).strong()
-                                } else {
-                                    egui::RichText::new(display_name)
-                                };
-                                if ui.selectable_label(is_selected, text).clicked() && !is_selected
-                                {
-                                    load_target = Some(map_name.to_string());
-                                }
-                            }
-                        });
-                }
+        egui::ScrollArea::vertical().show(ui, |ui| {
+            let mut load_target: Option<MapManifestEntry> = None;
+
+            render_source_section(
+                ui,
+                &list_curated_maps,
+                curated_groups.clone(),
+                &mut self.selected,
+                &mut load_target,
+                &list_missing_metadata,
+            );
+
+            if show_raw_maps {
+                ui.separator();
+                render_source_section(
+                    ui,
+                    &list_raw_maps,
+                    raw_groups.clone(),
+                    &mut self.selected,
+                    &mut load_target,
+                    &list_missing_metadata,
+                );
             }
 
             if let Some(target) = load_target {
-                self.selected = Some(target.clone());
-                world.resource_mut::<MapLoadRequest>().map_to_load = Some(target);
+                self.selected = Some(target.path.clone());
+                world.resource_mut::<MapLoadRequest>().map_to_load = Some(target.path.clone());
+                world.resource_mut::<SelectedMapDetails>().0 = Some(target);
             }
         });
     }
@@ -328,5 +454,152 @@ impl WorkbenchPanel for MapListPanel {
 
     fn default_visible(&self) -> bool {
         true
+    }
+}
+
+fn render_source_section(
+    ui: &mut egui::Ui,
+    title: &str,
+    groups: Vec<(String, Vec<&MapManifestEntry>)>,
+    selected: &mut Option<String>,
+    load_target: &mut Option<MapManifestEntry>,
+    missing_metadata_label: &str,
+) {
+    let total: usize = groups.iter().map(|(_, entries)| entries.len()).sum();
+    if total == 0 {
+        return;
+    }
+
+    ui.heading(format!("{title} ({total})"));
+    for (group_name, maps) in groups {
+        if maps.is_empty() {
+            continue;
+        }
+        let header = format!("{} ({})", group_name, maps.len());
+        egui::CollapsingHeader::new(header)
+            .default_open(false)
+            .show(ui, |ui| {
+                for entry in maps {
+                    render_map_entry(ui, entry, selected, load_target, missing_metadata_label);
+                }
+            });
+    }
+}
+
+fn render_map_entry(
+    ui: &mut egui::Ui,
+    entry: &MapManifestEntry,
+    selected: &Option<String>,
+    load_target: &mut Option<MapManifestEntry>,
+    missing_metadata_label: &str,
+) {
+    let is_selected = selected.as_deref() == Some(entry.path.as_str());
+    ui.horizontal_wrapped(|ui| {
+        let response = ui.selectable_label(is_selected, &entry.room_name);
+        if response.clicked() && !is_selected {
+            *load_target = Some(entry.clone());
+        }
+        render_status_badge(ui, &entry.source, source_color(&entry.source));
+        if let Some(status) = &entry.visual_status {
+            render_status_badge(ui, status, visual_status_color(status));
+        } else if entry.source == "curated" {
+            render_status_badge(ui, missing_metadata_label, egui::Color32::RED);
+        }
+        if let Some(scope) = &entry.scope {
+            render_status_badge(ui, scope, egui::Color32::from_rgb(140, 140, 160));
+        }
+    });
+}
+
+fn render_status_badge(ui: &mut egui::Ui, label: &str, color: egui::Color32) {
+    ui.label(
+        egui::RichText::new(format!(" {label} "))
+            .background_color(color.gamma_multiply(0.2))
+            .color(color)
+            .strong(),
+    );
+}
+
+fn source_color(source: &str) -> egui::Color32 {
+    match source {
+        "curated" => egui::Color32::from_rgb(80, 190, 120),
+        "raw" => egui::Color32::from_rgb(140, 150, 165),
+        _ => egui::Color32::LIGHT_GRAY,
+    }
+}
+
+fn visual_status_color(status: &str) -> egui::Color32 {
+    match status {
+        "curated" => egui::Color32::from_rgb(80, 190, 120),
+        "reviewed_clean" => egui::Color32::from_rgb(80, 170, 220),
+        "seeded" => egui::Color32::from_rgb(220, 190, 80),
+        "needs_work" => egui::Color32::from_rgb(235, 145, 60),
+        "unreviewed" => egui::Color32::from_rgb(150, 150, 150),
+        _ => egui::Color32::LIGHT_GRAY,
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn walk_dir_collect(
+    dir: &std::path::Path,
+    base: &std::path::Path,
+    maps: &mut Vec<MapManifestEntry>,
+) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            walk_dir_collect(&path, base, maps);
+        } else if path.extension().is_some_and(|ext| ext == "tmx")
+            && let Ok(rel) = path.strip_prefix(base)
+        {
+            maps.push(default_entry_from_path(rel.to_string_lossy().as_ref()));
+        }
+    }
+}
+
+fn default_entry_from_path(path: &str) -> MapManifestEntry {
+    let normalized = path.replace('\\', "/");
+    let room_name = std::path::Path::new(&normalized)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or(&normalized)
+        .to_string();
+
+    MapManifestEntry {
+        path: normalized.clone(),
+        source: infer_source(&normalized).into(),
+        dataset: infer_dataset(&normalized).into(),
+        room_name,
+        ..Default::default()
+    }
+}
+
+fn infer_source(path: &str) -> &str {
+    if path.starts_with("curated/") {
+        "curated"
+    } else {
+        "raw"
+    }
+}
+
+fn infer_dataset(path: &str) -> &str {
+    let path = path
+        .trim_start_matches("raw/")
+        .trim_start_matches("curated/");
+    if path.starts_with("undertale/") {
+        "undertale"
+    } else if path.starts_with("deltarune/deltarune_ch1/") || path.starts_with("deltarune_ch1/") {
+        "deltarune_ch1"
+    } else if path.starts_with("deltarune/deltarune_ch2/") || path.starts_with("deltarune_ch2/") {
+        "deltarune_ch2"
+    } else if path.starts_with("deltarune/deltarune_ch3/") || path.starts_with("deltarune_ch3/") {
+        "deltarune_ch3"
+    } else if path.starts_with("deltarune/deltarune_ch4/") || path.starts_with("deltarune_ch4/") {
+        "deltarune_ch4"
+    } else {
+        "other"
     }
 }

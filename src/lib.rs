@@ -7,6 +7,7 @@ use bevy_egui::{EguiContexts, EguiTextureHandle};
 use bevy_workbench::console::console_log_layer;
 use bevy_workbench::i18n::{I18n, Locale};
 use bevy_workbench::prelude::*;
+use serde::{Deserialize, Serialize};
 
 use std::sync::Arc;
 use std::sync::RwLock;
@@ -14,7 +15,7 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 mod panels;
 
-use panels::{MapListPanel, MapPreviewPanel};
+use panels::{MapDetailsPanel, MapListPanel, MapPreviewPanel};
 
 // --- Public API ---
 
@@ -23,9 +24,36 @@ use panels::{MapListPanel, MapPreviewPanel};
 pub struct MapCategory {
     /// Display name (e.g. "Undertale", "Deltarune Ch1").
     pub name: String,
-    /// Directory prefix under `assets/` that maps in this category share
-    /// (e.g. "undertale", "deltarune_ch1").
+    /// Category key used to group manifest entries (for example a dataset id
+    /// such as "undertale" or "deltarune_ch1").
+    ///
+    /// When the viewer falls back to raw path scanning, this still acts as a
+    /// best-effort grouping key inferred from the asset path.
     pub directory: String,
+}
+
+/// One map entry loaded from a structured manifest.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct MapManifestEntry {
+    pub path: String,
+    pub source: String,
+    pub dataset: String,
+    pub room_name: String,
+    #[serde(default)]
+    pub visual_status: Option<String>,
+    #[serde(default)]
+    pub logic_status: Option<String>,
+    #[serde(default)]
+    pub scope: Option<String>,
+    #[serde(default)]
+    pub notes: Option<String>,
+}
+
+/// Top-level manifest file consumed by the viewer.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct MapManifest {
+    #[serde(default)]
+    pub maps: Vec<MapManifestEntry>,
 }
 
 /// Top-level configuration for the viewer application.
@@ -35,8 +63,12 @@ pub struct ViewerConfig {
     /// Initial window resolution (width, height).
     pub resolution: (u32, u32),
     /// Map categories. When non-empty the map list panel groups maps
-    /// under collapsible headers. When empty, all maps are shown in a flat list.
+    /// under collapsible headers. When empty, maps fall back to a flat list.
     pub categories: Vec<MapCategory>,
+    /// Structured manifest path under the web assets root.
+    pub manifest_path: String,
+    /// Whether raw maps should be visible by default.
+    pub default_show_raw_maps: bool,
     /// Additional Fluent locale sources `(locale, ftl_content)` to register.
     pub locale_sources: Vec<(Locale, &'static str)>,
 }
@@ -47,6 +79,8 @@ impl Default for ViewerConfig {
             title: "Tiled Map Web Viewer".into(),
             resolution: (1280, 720),
             categories: vec![],
+            manifest_path: "assets/manifest.json".into(),
+            default_show_raw_maps: false,
             locale_sources: vec![],
         }
     }
@@ -57,6 +91,7 @@ pub fn run(config: ViewerConfig) {
     let mut app = App::new();
 
     let dev_toggle = Arc::new(AtomicBool::new(false));
+    let raw_toggle = Arc::new(AtomicBool::new(config.default_show_raw_maps));
     app.add_plugins(
         DefaultPlugins
             .set(AssetPlugin {
@@ -107,12 +142,15 @@ pub fn run(config: ViewerConfig) {
 
     // Store categories as a resource for the map list panel
     let categories = config.categories.clone();
+    let manifest_path = config.manifest_path.clone();
 
     app.init_resource::<MapLoadRequest>()
         .init_resource::<MapLoadingState>()
         .init_resource::<PreviewInput>()
         .init_resource::<CameraZoomState>()
         .init_resource::<DevWindowsEnabled>()
+        .init_resource::<ShowRawMapsEnabled>()
+        .init_resource::<SelectedMapDetails>()
         .init_resource::<ScrollSensitivity>()
         .init_resource::<MenuBarExtensions>()
         .add_systems(Startup, setup)
@@ -134,9 +172,11 @@ pub fn run(config: ViewerConfig) {
 
     // Register panels
     let t_for_list = shared_translations.clone();
-    app.register_panel(MapListPanel::new(t_for_list, categories));
+    app.register_panel(MapListPanel::new(t_for_list, categories, manifest_path));
     let t_for_preview = shared_translations.clone();
     app.register_panel(MapPreviewPanel::new(t_for_preview));
+    let t_for_details = shared_translations.clone();
+    app.register_panel(MapDetailsPanel::new(t_for_details));
 
     // Hide Inspector and Console
     {
@@ -159,6 +199,24 @@ pub fn run(config: ViewerConfig) {
             let mut val = toggle_for_settings.load(Ordering::Relaxed);
             if ui.checkbox(&mut val, label).changed() {
                 toggle_for_settings.store(val, Ordering::Relaxed);
+            }
+        }),
+    });
+
+    // Settings: Map visibility section
+    let raw_for_settings = raw_toggle.clone();
+    let t_for_map_section = shared_translations.clone();
+    app.register_settings_section(SettingsSection {
+        label: shared_translations
+            .read()
+            .unwrap()
+            .map_visibility_label
+            .clone(),
+        ui_fn: Box::new(move |ui| {
+            let label = t_for_map_section.read().unwrap().show_raw_maps.clone();
+            let mut val = raw_for_settings.load(Ordering::Relaxed);
+            if ui.checkbox(&mut val, label).changed() {
+                raw_for_settings.store(val, Ordering::Relaxed);
             }
         }),
     });
@@ -197,15 +255,18 @@ pub fn run(config: ViewerConfig) {
 
     // System to sync atomic values → resources and update translations on locale change
     let toggle_for_system = dev_toggle.clone();
+    let raw_for_system = raw_toggle.clone();
     let zoom_for_system = zoom_sens.clone();
     let pan_for_system = pan_sens.clone();
     let t_for_sync = shared_translations.clone();
     app.add_systems(
         Update,
         move |mut dev_enabled: ResMut<DevWindowsEnabled>,
+              mut show_raw_maps: ResMut<ShowRawMapsEnabled>,
               mut sensitivity: ResMut<ScrollSensitivity>,
               i18n: Res<I18n>| {
             dev_enabled.0 = toggle_for_system.load(Ordering::Relaxed);
+            show_raw_maps.0 = raw_for_system.load(Ordering::Relaxed);
             sensitivity.zoom = f32::from_bits(zoom_for_system.load(Ordering::Relaxed));
             sensitivity.pan = f32::from_bits(pan_for_system.load(Ordering::Relaxed));
 
@@ -230,11 +291,27 @@ struct Translations {
     pan_sensitivity: String,
     developer_label: String,
     sensitivity_label: String,
+    map_visibility_label: String,
+    show_raw_maps: String,
     dev_windows_menu: String,
     inspector: String,
     console: String,
     map_list: String,
     map_preview: String,
+    map_details: String,
+    list_curated_maps: String,
+    list_raw_maps: String,
+    list_loading_maps: String,
+    list_no_maps: String,
+    list_missing_metadata: String,
+    details_no_selection: String,
+    details_path: String,
+    details_source: String,
+    details_dataset: String,
+    details_visual_status: String,
+    details_logic_status: String,
+    details_scope: String,
+    details_notes: String,
     loading_cleanup: String,
     loading_textures: String,
     loading_spawning: String,
@@ -248,11 +325,27 @@ impl Translations {
             pan_sensitivity: i18n.t("settings-pan-sensitivity"),
             developer_label: i18n.t("settings-developer"),
             sensitivity_label: i18n.t("settings-sensitivity"),
+            map_visibility_label: i18n.t("settings-map-visibility"),
+            show_raw_maps: i18n.t("settings-show-raw-maps"),
             dev_windows_menu: i18n.t("menu-dev-windows"),
             inspector: i18n.t("menu-dev-inspector"),
             console: i18n.t("menu-dev-console"),
             map_list: i18n.t("panel-map-list"),
             map_preview: i18n.t("panel-map-preview"),
+            map_details: i18n.t("panel-map-details"),
+            list_curated_maps: i18n.t("list-curated-maps"),
+            list_raw_maps: i18n.t("list-raw-maps"),
+            list_loading_maps: i18n.t("list-loading-maps"),
+            list_no_maps: i18n.t("list-no-maps"),
+            list_missing_metadata: i18n.t("list-missing-metadata"),
+            details_no_selection: i18n.t("details-no-selection"),
+            details_path: i18n.t("details-path"),
+            details_source: i18n.t("details-source"),
+            details_dataset: i18n.t("details-dataset"),
+            details_visual_status: i18n.t("details-visual-status"),
+            details_logic_status: i18n.t("details-logic-status"),
+            details_scope: i18n.t("details-scope"),
+            details_notes: i18n.t("details-notes"),
             loading_cleanup: i18n.t("loading-cleanup"),
             loading_textures: i18n.t("loading-textures"),
             loading_spawning: i18n.t("loading-spawning"),
@@ -319,6 +412,12 @@ impl Default for CameraZoomState {
 
 #[derive(Resource, Default)]
 struct DevWindowsEnabled(bool);
+
+#[derive(Resource, Default)]
+struct ShowRawMapsEnabled(bool);
+
+#[derive(Resource, Default)]
+struct SelectedMapDetails(Option<MapManifestEntry>);
 
 #[derive(Resource)]
 struct ScrollSensitivity {
