@@ -2,8 +2,8 @@ use bevy::prelude::*;
 use bevy_workbench::dock::WorkbenchPanel;
 
 use crate::{
-    MapCategory, MapLoadRequest, MapManifest, MapManifestEntry, MapSection, SectionVisibilityState,
-    SelectedMapDetails, SharedTranslations,
+    MapCategory, MapListView, MapLoadRequest, MapManifest, MapManifestEntry, MapSection,
+    SectionVisibilityState, SelectedMapDetails, SharedTranslations,
 };
 
 #[derive(Default)]
@@ -220,6 +220,7 @@ pub(crate) struct MapListPanel {
     pub(crate) translations: SharedTranslations,
     pub(crate) sections: Vec<MapSection>,
     pub(crate) categories: Vec<MapCategory>,
+    list: MapListView,
     manifest_path: String,
     maps: Vec<MapManifestEntry>,
     scanned: bool,
@@ -232,11 +233,13 @@ impl MapListPanel {
         sections: Vec<MapSection>,
         categories: Vec<MapCategory>,
         manifest_path: String,
+        list: MapListView,
     ) -> Self {
         Self {
             translations,
             sections,
             categories,
+            list,
             manifest_path,
             ..Default::default()
         }
@@ -330,14 +333,11 @@ impl MapListPanel {
 
 impl WorkbenchPanel for MapListPanel {
     fn id(&self) -> &str {
-        "map_list"
+        &self.list.id
     }
 
     fn title(&self) -> String {
-        self.translations
-            .read()
-            .map(|t| t.map_list.clone())
-            .unwrap_or_else(|_| "Map List".into())
+        self.list.title.clone()
     }
 
     fn ui(&mut self, _ui: &mut egui::Ui) {}
@@ -353,13 +353,12 @@ impl WorkbenchPanel for MapListPanel {
             ui.label("Translations unavailable");
             return;
         };
-        let map_list = t.map_list.clone();
         let list_loading_maps = t.list_loading_maps.clone();
         let list_no_maps = t.list_no_maps.clone();
         let list_other_group = t.list_other_group.clone();
         drop(t);
 
-        ui.heading(&map_list);
+        ui.heading(self.title());
         ui.separator();
 
         if !self.scanned {
@@ -376,7 +375,23 @@ impl WorkbenchPanel for MapListPanel {
         egui::ScrollArea::vertical().show(ui, |ui| {
             let mut load_target: Option<MapManifestEntry> = None;
 
-            if self.sections.is_empty() {
+            if let Some(section_filter) = self.list.section_filter.as_deref() {
+                let entries: Vec<&MapManifestEntry> = self
+                    .maps
+                    .iter()
+                    .filter(|entry| entry.section.as_deref() == Some(section_filter))
+                    .collect();
+                if entries.is_empty() {
+                    ui.label(&list_no_maps);
+                    return;
+                }
+                render_category_groups(
+                    ui,
+                    grouped_maps_for_categories(&self.categories, entries, &list_other_group),
+                    &mut self.selected,
+                    &mut load_target,
+                );
+            } else if self.sections.is_empty() {
                 render_category_groups(
                     ui,
                     grouped_maps_for_categories(
@@ -448,7 +463,7 @@ impl WorkbenchPanel for MapListPanel {
     }
 
     fn default_visible(&self) -> bool {
-        true
+        self.list.default_visible
     }
 }
 
