@@ -358,6 +358,8 @@ impl WorkbenchPanel for MapListPanel {
         let list_loading_maps = t.list_loading_maps.clone();
         let list_no_maps = t.list_no_maps.clone();
         let list_other_group = t.list_other_group.clone();
+        let list_maps_group = t.list_maps_group.clone();
+        let list_worlds_group = t.list_worlds_group.clone();
         drop(t);
 
         ui.heading(self.title());
@@ -389,7 +391,13 @@ impl WorkbenchPanel for MapListPanel {
                 }
                 render_category_groups(
                     ui,
-                    grouped_maps_for_categories(&self.categories, entries, &list_other_group),
+                    grouped_maps_for_categories(
+                        &self.categories,
+                        entries,
+                        &list_other_group,
+                        &list_maps_group,
+                        &list_worlds_group,
+                    ),
                     &mut self.selected,
                     &mut load_target,
                 );
@@ -400,6 +408,8 @@ impl WorkbenchPanel for MapListPanel {
                         &self.categories,
                         self.maps.iter().collect(),
                         &list_other_group,
+                        &list_maps_group,
+                        &list_worlds_group,
                     ),
                     &mut self.selected,
                     &mut load_target,
@@ -421,7 +431,13 @@ impl WorkbenchPanel for MapListPanel {
                     ui.heading(format!("{} ({total})", section.name));
                     render_category_groups(
                         ui,
-                        grouped_maps_for_categories(&self.categories, entries, &list_other_group),
+                        grouped_maps_for_categories(
+                            &self.categories,
+                            entries,
+                            &list_other_group,
+                            &list_maps_group,
+                            &list_worlds_group,
+                        ),
                         &mut self.selected,
                         &mut load_target,
                     );
@@ -445,6 +461,8 @@ impl WorkbenchPanel for MapListPanel {
                             &self.categories,
                             uncategorized_sections,
                             &list_other_group,
+                            &list_maps_group,
+                            &list_worlds_group,
                         ),
                         &mut self.selected,
                         &mut load_target,
@@ -533,9 +551,31 @@ fn grouped_maps_for_categories<'a>(
     categories: &'a [MapCategory],
     entries: Vec<&'a MapManifestEntry>,
     other_label: &str,
+    maps_label: &str,
+    worlds_label: &str,
 ) -> Vec<(String, Vec<&'a MapManifestEntry>)> {
     if categories.is_empty() {
-        return vec![(other_label.to_string(), entries)];
+        let mut maps_group = Vec::new();
+        let mut worlds_group = Vec::new();
+
+        for entry in entries {
+            match entry.asset_kind() {
+                crate::MapAssetKind::Map => maps_group.push(entry),
+                crate::MapAssetKind::World => worlds_group.push(entry),
+            }
+        }
+
+        let mut groups = Vec::new();
+        if !maps_group.is_empty() {
+            groups.push((maps_label.to_string(), maps_group));
+        }
+        if !worlds_group.is_empty() {
+            groups.push((worlds_label.to_string(), worlds_group));
+        }
+        if groups.is_empty() {
+            groups.push((other_label.to_string(), Vec::new()));
+        }
+        return groups;
     }
 
     let mut groups: Vec<(String, Vec<&MapManifestEntry>)> = categories

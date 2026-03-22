@@ -15,9 +15,13 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 mod manifest;
 mod panels;
+mod world_view;
 
 pub use manifest::{MapAssetKind, MapBadge, MapDetail, MapManifest, MapManifestEntry};
 use panels::{MapDetailsPanel, MapListPanel, MapPreviewPanel};
+use world_view::{
+    focus_preview_camera_for_map, focus_preview_camera_for_world, world_chunking_for_preview,
+};
 
 // --- Public API ---
 
@@ -352,6 +356,8 @@ struct Translations {
     list_loading_maps: String,
     list_no_maps: String,
     list_other_group: String,
+    list_maps_group: String,
+    list_worlds_group: String,
     details_no_selection: String,
     details_path: String,
     details_kind: String,
@@ -382,6 +388,8 @@ impl Translations {
             list_loading_maps: i18n.t("list-loading-maps"),
             list_no_maps: i18n.t("list-no-maps"),
             list_other_group: i18n.t("list-other-group"),
+            list_maps_group: i18n.t("list-maps-group"),
+            list_worlds_group: i18n.t("list-worlds-group"),
             details_no_selection: i18n.t("details-no-selection"),
             details_path: i18n.t("details-path"),
             details_kind: i18n.t("details-kind"),
@@ -624,8 +632,12 @@ fn track_map_loading(
     mut loading: ResMut<MapLoadingState>,
     asset_server: Res<AssetServer>,
     i18n: Res<I18n>,
-    maps: Query<&Children, With<TiledMap>>,
+    world_assets: Res<Assets<TiledWorldAsset>>,
+    maps: Query<(&Children, Option<&ChildOf>), With<TiledMap>>,
     worlds: Query<&TiledWorldStorage, With<TiledWorld>>,
+    preview: Res<MapPreviewState>,
+    mut zoom_state: ResMut<CameraZoomState>,
+    mut preview_camera: Query<&mut Transform, With<PreviewCamera>>,
 ) {
     match loading.phase {
         LoadPhase::Idle => {}
@@ -648,18 +660,43 @@ fn track_map_loading(
                     PendingAssetHandle::Map(handle) => {
                         asset_server.recursive_dependency_load_state(handle)
                     }
-                    PendingAssetHandle::World(handle) => {
-                        asset_server.recursive_dependency_load_state(handle)
-                    }
+                    PendingAssetHandle::World(handle) => match asset_server.load_state(handle) {
+                        bevy::asset::LoadState::Loaded => RecursiveDependencyLoadState::Loaded,
+                        bevy::asset::LoadState::Loading => RecursiveDependencyLoadState::Loading,
+                        bevy::asset::LoadState::NotLoaded => {
+                            RecursiveDependencyLoadState::NotLoaded
+                        }
+                        bevy::asset::LoadState::Failed(error) => {
+                            RecursiveDependencyLoadState::Failed(error)
+                        }
+                    },
                 };
                 match load_state {
                     RecursiveDependencyLoadState::Loaded => {
                         match pending_asset {
                             PendingAssetHandle::Map(handle) => {
+                                focus_preview_camera_for_map(&mut preview_camera, &mut zoom_state);
                                 commands.spawn((TiledMap(handle.clone()), TilemapAnchor::Center));
                             }
                             PendingAssetHandle::World(handle) => {
-                                commands.spawn((TiledWorld(handle.clone()), TilemapAnchor::Center));
+                                let Some(tiled_world) = world_assets.get(handle) else {
+                                    error!("World asset loaded but unavailable in asset storage");
+                                    loading.phase = LoadPhase::Idle;
+                                    loading.status_text.clear();
+                                    loading.pending_asset = None;
+                                    return;
+                                };
+                                focus_preview_camera_for_world(
+                                    &mut preview_camera,
+                                    &mut zoom_state,
+                                    &preview,
+                                    tiled_world,
+                                );
+                                commands.spawn((
+                                    TiledWorld(handle.clone()),
+                                    TilemapAnchor::Center,
+                                    world_chunking_for_preview(&preview, zoom_state.target_scale),
+                                ));
                             }
                         }
                         loading.phase = LoadPhase::Spawning;
@@ -680,18 +717,25 @@ fn track_map_loading(
             let mut finished = false;
             match loading.pending_asset {
                 Some(PendingAssetHandle::Map(_)) => {
-                    for children in &maps {
-                        if !children.is_empty() {
+                    for (children, child_of) in &maps {
+                        if child_of.is_none() && !children.is_empty() {
                             finished = true;
                             break;
                         }
                     }
                 }
                 Some(PendingAssetHandle::World(_)) => {
-                    for storage in &worlds {
-                        if storage.maps().next().is_some() {
+                    for (children, child_of) in &maps {
+                        if child_of.is_some() && !children.is_empty() {
                             finished = true;
                             break;
+                        }
+                    }
+                    if !finished {
+                        for storage in &worlds {
+                            if storage.maps().next().is_some() {
+                                loading.status_text = i18n.t("loading-spawning");
+                            }
                         }
                     }
                 }

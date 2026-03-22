@@ -66,15 +66,10 @@ fn handle_world_chunking(
     ) in world_query.iter_mut()
     {
         // Make sure we have a valid reference on a fully loaded world asset
-        let Some(tiled_world) = asset_server
-            .get_recursive_dependency_load_state(&world_handle.0)
-            .and_then(|state| {
-                if state.is_loaded() {
-                    return worlds.get(&world_handle.0);
-                }
-                None
-            })
-        else {
+        if !asset_server.load_state(&world_handle.0).is_loaded() {
+            continue;
+        }
+        let Some(tiled_world) = worlds.get(&world_handle.0) else {
             continue;
         };
 
