@@ -15,10 +15,8 @@ use std::sync::RwLock;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 mod panels;
-mod web_loading;
 
 use panels::{MapDetailsPanel, MapListPanel, MapPreviewPanel};
-use web_loading::WebLoadingOverlayState;
 
 // --- Public API ---
 
@@ -182,11 +180,6 @@ pub fn run(config: ViewerConfig) {
         let i18n = app.world().resource::<I18n>();
         Arc::new(RwLock::new(Translations::from_i18n(i18n)))
     };
-    let initial_loading_label = shared_translations
-        .read()
-        .map(|t| t.loading_viewer.clone())
-        .unwrap_or_else(|_| "Loading viewer...".into());
-    web_loading::install(&initial_loading_label, 0.12);
 
     // Store categories as a resource for the map list panel
     let sections = config.sections.clone();
@@ -198,7 +191,6 @@ pub fn run(config: ViewerConfig) {
         .init_resource::<PreviewInput>()
         .init_resource::<CameraZoomState>()
         .init_resource::<DevWindowsEnabled>()
-        .insert_resource(WebLoadingOverlayState::new(initial_loading_label))
         .insert_resource(SectionVisibilityState::from_sections(&config.sections))
         .init_resource::<SelectedMapDetails>()
         .init_resource::<ScrollSensitivity>()
@@ -213,7 +205,6 @@ pub fn run(config: ViewerConfig) {
                 apply_camera_zoom,
                 apply_camera_pan,
                 handle_dev_menu_actions,
-                web_loading::sync_overlay,
             ),
         )
         .add_systems(
@@ -378,7 +369,6 @@ struct Translations {
     details_section: String,
     details_category: String,
     details_badges: String,
-    loading_viewer: String,
     loading_cleanup: String,
     loading_textures: String,
     loading_spawning: String,
@@ -408,7 +398,6 @@ impl Translations {
             details_section: i18n.t("details-section"),
             details_category: i18n.t("details-category"),
             details_badges: i18n.t("details-badges"),
-            loading_viewer: i18n.t("loading-viewer"),
             loading_cleanup: i18n.t("loading-cleanup"),
             loading_textures: i18n.t("loading-textures"),
             loading_spawning: i18n.t("loading-spawning"),
