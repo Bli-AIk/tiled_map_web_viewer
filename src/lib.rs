@@ -205,6 +205,7 @@ pub fn run(config: ViewerConfig) {
                 apply_camera_zoom,
                 apply_camera_pan,
                 handle_dev_menu_actions,
+                notify_web_loader_ready,
             ),
         )
         .add_systems(
@@ -788,3 +789,25 @@ fn sync_preview_to_panel(
         panel.pending_drag = egui::Vec2::ZERO;
     }
 }
+
+#[cfg(target_arch = "wasm32")]
+fn notify_web_loader_ready(mut notified: Local<bool>) {
+    if *notified {
+        return;
+    }
+
+    let Some(window) = web_sys::window() else {
+        return;
+    };
+
+    let Ok(event) = web_sys::Event::new("bevy-app-ready") else {
+        return;
+    };
+
+    if window.dispatch_event(&event).is_ok() {
+        *notified = true;
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn notify_web_loader_ready() {}
