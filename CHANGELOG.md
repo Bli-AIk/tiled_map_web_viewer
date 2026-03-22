@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0](https://github.com/Bli-AIk/tiled_map_web_viewer/compare/v0.2.2...v0.3.0) - 2026-03-22
+
+### Added
+
+- *(ui)* support multiple map list panels ([#12](https://github.com/Bli-AIk/tiled_map_web_viewer/pull/12))
+
 ## [0.2.2](https://github.com/Bli-AIk/tiled_map_web_viewer/compare/v0.2.1...v0.2.2) - 2026-03-22
 
 ### Fixed
