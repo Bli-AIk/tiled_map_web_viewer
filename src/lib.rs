@@ -9,6 +9,7 @@ use bevy_workbench::i18n::{I18n, Locale};
 use bevy_workbench::prelude::*;
 use serde::{Deserialize, Serialize};
 
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::RwLock;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
@@ -21,32 +22,62 @@ use panels::{MapDetailsPanel, MapListPanel, MapPreviewPanel};
 
 /// A named group of maps shown as a collapsible section in the map list panel.
 #[derive(Clone, Debug)]
-pub struct MapCategory {
-    /// Display name (e.g. "Undertale", "Deltarune Ch1").
+pub struct MapSection {
+    /// Display name shown in the map list and settings UI.
     pub name: String,
-    /// Category key used to group manifest entries (for example a dataset id
-    /// such as "undertale" or "deltarune_ch1").
-    ///
-    /// When the viewer falls back to raw path scanning, this still acts as a
-    /// best-effort grouping key inferred from the asset path.
-    pub directory: String,
+    /// Stable key used to match manifest entries.
+    pub key: String,
+    /// Whether this section should be visible by default.
+    pub default_visible: bool,
+}
+
+/// A named group of maps shown inside a section in the map list panel.
+#[derive(Clone, Debug)]
+pub struct MapCategory {
+    /// Display name shown in the list panel.
+    pub name: String,
+    /// Stable key used to match manifest entries.
+    pub key: String,
+}
+
+/// One compact badge rendered next to a map entry.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct MapBadge {
+    pub label: String,
+    #[serde(default)]
+    pub tone: Option<String>,
+}
+
+/// One detail row shown in the details panel.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct MapDetail {
+    pub label: String,
+    pub value: String,
 }
 
 /// One map entry loaded from a structured manifest.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct MapManifestEntry {
     pub path: String,
-    pub source: String,
-    pub dataset: String,
-    pub room_name: String,
+    pub title: String,
     #[serde(default)]
-    pub visual_status: Option<String>,
+    pub section: Option<String>,
     #[serde(default)]
-    pub logic_status: Option<String>,
+    pub category: Option<String>,
     #[serde(default)]
-    pub scope: Option<String>,
+    pub badges: Vec<MapBadge>,
     #[serde(default)]
-    pub notes: Option<String>,
+    pub details: Vec<MapDetail>,
+}
+
+impl MapManifestEntry {
+    pub fn display_title(&self) -> &str {
+        if self.title.is_empty() {
+            &self.path
+        } else {
+            &self.title
+        }
+    }
 }
 
 /// Top-level manifest file consumed by the viewer.
@@ -62,13 +93,13 @@ pub struct ViewerConfig {
     pub title: String,
     /// Initial window resolution (width, height).
     pub resolution: (u32, u32),
+    /// Top-level sections used to organize manifest entries.
+    pub sections: Vec<MapSection>,
     /// Map categories. When non-empty the map list panel groups maps
     /// under collapsible headers. When empty, maps fall back to a flat list.
     pub categories: Vec<MapCategory>,
     /// Structured manifest path under the web assets root.
     pub manifest_path: String,
-    /// Whether raw maps should be visible by default.
-    pub default_show_raw_maps: bool,
     /// Additional Fluent locale sources `(locale, ftl_content)` to register.
     pub locale_sources: Vec<(Locale, &'static str)>,
 }
@@ -78,9 +109,9 @@ impl Default for ViewerConfig {
         Self {
             title: "Tiled Map Web Viewer".into(),
             resolution: (1280, 720),
+            sections: vec![],
             categories: vec![],
             manifest_path: "assets/manifest.json".into(),
-            default_show_raw_maps: false,
             locale_sources: vec![],
         }
     }
@@ -91,7 +122,17 @@ pub fn run(config: ViewerConfig) {
     let mut app = App::new();
 
     let dev_toggle = Arc::new(AtomicBool::new(false));
-    let raw_toggle = Arc::new(AtomicBool::new(config.default_show_raw_maps));
+    let section_toggles = Arc::new(RwLock::new(
+        config
+            .sections
+            .iter()
+            .map(|section| SectionToggle {
+                key: section.key.clone(),
+                name: section.name.clone(),
+                visible: section.default_visible,
+            })
+            .collect::<Vec<_>>(),
+    ));
     app.add_plugins(
         DefaultPlugins
             .set(AssetPlugin {
@@ -141,6 +182,7 @@ pub fn run(config: ViewerConfig) {
     };
 
     // Store categories as a resource for the map list panel
+    let sections = config.sections.clone();
     let categories = config.categories.clone();
     let manifest_path = config.manifest_path.clone();
 
@@ -149,7 +191,7 @@ pub fn run(config: ViewerConfig) {
         .init_resource::<PreviewInput>()
         .init_resource::<CameraZoomState>()
         .init_resource::<DevWindowsEnabled>()
-        .init_resource::<ShowRawMapsEnabled>()
+        .insert_resource(SectionVisibilityState::from_sections(&config.sections))
         .init_resource::<SelectedMapDetails>()
         .init_resource::<ScrollSensitivity>()
         .init_resource::<MenuBarExtensions>()
@@ -172,7 +214,12 @@ pub fn run(config: ViewerConfig) {
 
     // Register panels
     let t_for_list = shared_translations.clone();
-    app.register_panel(MapListPanel::new(t_for_list, categories, manifest_path));
+    app.register_panel(MapListPanel::new(
+        t_for_list,
+        sections,
+        categories,
+        manifest_path,
+    ));
     let t_for_preview = shared_translations.clone();
     app.register_panel(MapPreviewPanel::new(t_for_preview));
     let t_for_details = shared_translations.clone();
@@ -203,23 +250,31 @@ pub fn run(config: ViewerConfig) {
         }),
     });
 
-    // Settings: Map visibility section
-    let raw_for_settings = raw_toggle.clone();
-    let t_for_map_section = shared_translations.clone();
-    app.register_settings_section(SettingsSection {
-        label: shared_translations
-            .read()
-            .unwrap()
-            .map_visibility_label
-            .clone(),
-        ui_fn: Box::new(move |ui| {
-            let label = t_for_map_section.read().unwrap().show_raw_maps.clone();
-            let mut val = raw_for_settings.load(Ordering::Relaxed);
-            if ui.checkbox(&mut val, label).changed() {
-                raw_for_settings.store(val, Ordering::Relaxed);
-            }
-        }),
-    });
+    if !config.sections.is_empty() {
+        let toggles_for_settings = section_toggles.clone();
+        let t_for_map_section = shared_translations.clone();
+        app.register_settings_section(SettingsSection {
+            label: shared_translations
+                .read()
+                .unwrap()
+                .map_sections_label
+                .clone(),
+            ui_fn: Box::new(move |ui| {
+                let Ok(t) = t_for_map_section.read() else {
+                    return;
+                };
+                ui.label(&t.settings_visible_sections_hint);
+                drop(t);
+
+                let Ok(mut toggles) = toggles_for_settings.write() else {
+                    return;
+                };
+                for toggle in toggles.iter_mut() {
+                    ui.checkbox(&mut toggle.visible, &toggle.name);
+                }
+            }),
+        });
+    }
 
     // Settings: Sensitivity section
     let zoom_sens = Arc::new(AtomicU32::new(0.01_f32.to_bits()));
@@ -255,18 +310,25 @@ pub fn run(config: ViewerConfig) {
 
     // System to sync atomic values → resources and update translations on locale change
     let toggle_for_system = dev_toggle.clone();
-    let raw_for_system = raw_toggle.clone();
+    let section_toggles_for_system = section_toggles.clone();
     let zoom_for_system = zoom_sens.clone();
     let pan_for_system = pan_sens.clone();
     let t_for_sync = shared_translations.clone();
     app.add_systems(
         Update,
         move |mut dev_enabled: ResMut<DevWindowsEnabled>,
-              mut show_raw_maps: ResMut<ShowRawMapsEnabled>,
+              mut section_visibility: ResMut<SectionVisibilityState>,
               mut sensitivity: ResMut<ScrollSensitivity>,
               i18n: Res<I18n>| {
             dev_enabled.0 = toggle_for_system.load(Ordering::Relaxed);
-            show_raw_maps.0 = raw_for_system.load(Ordering::Relaxed);
+            section_visibility.0.clear();
+            if let Ok(toggles) = section_toggles_for_system.read() {
+                for toggle in toggles.iter() {
+                    section_visibility
+                        .0
+                        .insert(toggle.key.clone(), toggle.visible);
+                }
+            }
             sensitivity.zoom = f32::from_bits(zoom_for_system.load(Ordering::Relaxed));
             sensitivity.pan = f32::from_bits(pan_for_system.load(Ordering::Relaxed));
 
@@ -291,27 +353,22 @@ struct Translations {
     pan_sensitivity: String,
     developer_label: String,
     sensitivity_label: String,
-    map_visibility_label: String,
-    show_raw_maps: String,
+    map_sections_label: String,
+    settings_visible_sections_hint: String,
     dev_windows_menu: String,
     inspector: String,
     console: String,
     map_list: String,
     map_preview: String,
     map_details: String,
-    list_curated_maps: String,
-    list_raw_maps: String,
     list_loading_maps: String,
     list_no_maps: String,
-    list_missing_metadata: String,
+    list_other_group: String,
     details_no_selection: String,
     details_path: String,
-    details_source: String,
-    details_dataset: String,
-    details_visual_status: String,
-    details_logic_status: String,
-    details_scope: String,
-    details_notes: String,
+    details_section: String,
+    details_category: String,
+    details_badges: String,
     loading_cleanup: String,
     loading_textures: String,
     loading_spawning: String,
@@ -325,27 +382,22 @@ impl Translations {
             pan_sensitivity: i18n.t("settings-pan-sensitivity"),
             developer_label: i18n.t("settings-developer"),
             sensitivity_label: i18n.t("settings-sensitivity"),
-            map_visibility_label: i18n.t("settings-map-visibility"),
-            show_raw_maps: i18n.t("settings-show-raw-maps"),
+            map_sections_label: i18n.t("settings-map-sections"),
+            settings_visible_sections_hint: i18n.t("settings-visible-sections-hint"),
             dev_windows_menu: i18n.t("menu-dev-windows"),
             inspector: i18n.t("menu-dev-inspector"),
             console: i18n.t("menu-dev-console"),
             map_list: i18n.t("panel-map-list"),
             map_preview: i18n.t("panel-map-preview"),
             map_details: i18n.t("panel-map-details"),
-            list_curated_maps: i18n.t("list-curated-maps"),
-            list_raw_maps: i18n.t("list-raw-maps"),
             list_loading_maps: i18n.t("list-loading-maps"),
             list_no_maps: i18n.t("list-no-maps"),
-            list_missing_metadata: i18n.t("list-missing-metadata"),
+            list_other_group: i18n.t("list-other-group"),
             details_no_selection: i18n.t("details-no-selection"),
             details_path: i18n.t("details-path"),
-            details_source: i18n.t("details-source"),
-            details_dataset: i18n.t("details-dataset"),
-            details_visual_status: i18n.t("details-visual-status"),
-            details_logic_status: i18n.t("details-logic-status"),
-            details_scope: i18n.t("details-scope"),
-            details_notes: i18n.t("details-notes"),
+            details_section: i18n.t("details-section"),
+            details_category: i18n.t("details-category"),
+            details_badges: i18n.t("details-badges"),
             loading_cleanup: i18n.t("loading-cleanup"),
             loading_textures: i18n.t("loading-textures"),
             loading_spawning: i18n.t("loading-spawning"),
@@ -414,10 +466,28 @@ impl Default for CameraZoomState {
 struct DevWindowsEnabled(bool);
 
 #[derive(Resource, Default)]
-struct ShowRawMapsEnabled(bool);
+struct SectionVisibilityState(HashMap<String, bool>);
+
+impl SectionVisibilityState {
+    fn from_sections(sections: &[MapSection]) -> Self {
+        Self(
+            sections
+                .iter()
+                .map(|section| (section.key.clone(), section.default_visible))
+                .collect(),
+        )
+    }
+}
 
 #[derive(Resource, Default)]
 struct SelectedMapDetails(Option<MapManifestEntry>);
+
+#[derive(Clone)]
+struct SectionToggle {
+    key: String,
+    name: String,
+    visible: bool,
+}
 
 #[derive(Resource)]
 struct ScrollSensitivity {
