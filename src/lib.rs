@@ -9,14 +9,17 @@ use bevy_workbench::i18n::{I18n, Locale};
 use bevy_workbench::prelude::*;
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::RwLock;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
+mod cleanup;
 mod manifest;
 mod panels;
 mod world_view;
 
+use cleanup::{PendingCleanup, handle_map_load, process_pending_cleanup};
 pub use manifest::{MapAssetKind, MapBadge, MapDetail, MapManifest, MapManifestEntry};
 use panels::{MapDetailsPanel, MapListPanel, MapPreviewPanel};
 use world_view::{
@@ -95,6 +98,7 @@ impl Default for ViewerConfig {
 /// Entry point — builds and runs the Bevy application with the given configuration.
 pub fn run(config: ViewerConfig) {
     let mut app = App::new();
+    let asset_file_path = default_asset_file_path();
 
     let dev_toggle = Arc::new(AtomicBool::new(false));
     let section_toggles = Arc::new(RwLock::new(
@@ -111,6 +115,7 @@ pub fn run(config: ViewerConfig) {
     app.add_plugins(
         DefaultPlugins
             .set(AssetPlugin {
+                file_path: asset_file_path,
                 meta_check: AssetMetaCheck::Never,
                 ..default()
             })
@@ -176,6 +181,7 @@ pub fn run(config: ViewerConfig) {
 
     app.init_resource::<MapLoadRequest>()
         .init_resource::<MapLoadingState>()
+        .init_resource::<PendingCleanup>()
         .init_resource::<PreviewInput>()
         .init_resource::<CameraZoomState>()
         .init_resource::<DevWindowsEnabled>()
@@ -186,9 +192,11 @@ pub fn run(config: ViewerConfig) {
         .add_systems(Startup, setup)
         .add_systems(
             Update,
+            (handle_map_load, process_pending_cleanup, track_map_loading).chain(),
+        )
+        .add_systems(
+            Update,
             (
-                handle_map_load,
-                track_map_loading,
                 sync_preview_to_panel,
                 apply_camera_zoom,
                 apply_camera_pan,
@@ -333,6 +341,27 @@ pub fn run(config: ViewerConfig) {
     );
 
     app.run();
+}
+
+fn default_asset_file_path() -> String {
+    #[cfg(target_arch = "wasm32")]
+    {
+        "assets".into()
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        if let Ok(root) = std::env::var("BEVY_ASSET_ROOT") {
+            return root;
+        }
+
+        let manifest_assets = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets");
+        if manifest_assets.exists() {
+            return manifest_assets.to_string_lossy().into_owned();
+        }
+
+        "assets".into()
+    }
 }
 
 // --- Internal types ---
@@ -603,33 +632,10 @@ fn handle_dev_menu_actions(
     }
 }
 
-fn handle_map_load(
-    mut commands: Commands,
-    mut load_request: ResMut<MapLoadRequest>,
-    mut loading: ResMut<MapLoadingState>,
-    i18n: Res<I18n>,
-    existing_assets: Query<(Entity, Has<TiledMap>, Has<TiledWorld>, Option<&ChildOf>)>,
-) {
-    let Some(entry) = load_request.entry_to_load.take() else {
-        return;
-    };
-
-    for (entity, has_map, has_world, child_of) in &existing_assets {
-        let is_standalone_map = has_map && child_of.is_none();
-        if has_world || is_standalone_map {
-            commands.entity(entity).despawn();
-        }
-    }
-
-    loading.phase = LoadPhase::Cleanup;
-    loading.current_entry = Some(entry);
-    loading.pending_asset = None;
-    loading.status_text = i18n.t("loading-cleanup");
-}
-
 fn track_map_loading(
     mut commands: Commands,
     mut loading: ResMut<MapLoadingState>,
+    cleanup: Res<PendingCleanup>,
     asset_server: Res<AssetServer>,
     i18n: Res<I18n>,
     world_assets: Res<Assets<TiledWorldAsset>>,
@@ -642,7 +648,9 @@ fn track_map_loading(
     match loading.phase {
         LoadPhase::Idle => {}
         LoadPhase::Cleanup => {
-            if let Some(ref entry) = loading.current_entry.clone() {
+            if !cleanup.is_empty() {
+                loading.status_text = i18n.t("loading-cleanup");
+            } else if let Some(ref entry) = loading.current_entry.clone() {
                 loading.pending_asset = Some(match entry.asset_kind() {
                     MapAssetKind::Map => PendingAssetHandle::Map(asset_server.load(&entry.path)),
                     MapAssetKind::World => {

@@ -5,9 +5,12 @@ use bevy_ecs_tiled::prelude::{TiledWorldAsset, TiledWorldChunking, TilemapAnchor
 use crate::{CameraZoomState, MapPreviewState, PreviewCamera};
 
 const DEFAULT_MAP_SCALE: f32 = 4.0;
+const MIN_INITIAL_WORLD_SCALE: f32 = 0.2;
 const WORLD_SCALE_PADDING: f32 = 1.1;
-const WORLD_CHUNK_PADDING: f32 = 1.25;
-const MIN_WORLD_CHUNK_HALF_EXTENT: f32 = 1024.0;
+const WORLD_CHUNK_PADDING: f32 = 1.1;
+const MAX_INITIAL_WORLD_SCALE: f32 = 8.0;
+const MAX_INITIAL_VISIBLE_MAPS: usize = 4;
+const MIN_WORLD_CHUNK_HALF_EXTENT: f32 = 512.0;
 
 pub(crate) fn focus_preview_camera_for_map(
     preview_camera: &mut Query<&mut Transform, With<PreviewCamera>>,
@@ -36,8 +39,15 @@ pub(crate) fn focus_preview_camera_for_world(
     }
 
     let fitted_scale = fit_scale_for_bounds(bounds, preview);
-    zoom_state.current_scale = fitted_scale;
-    zoom_state.target_scale = fitted_scale;
+    let initial_scale = limit_initial_scale_by_visible_maps(
+        tiled_world,
+        &TilemapAnchor::Center,
+        center,
+        preview,
+        fitted_scale,
+    );
+    zoom_state.current_scale = initial_scale;
+    zoom_state.target_scale = initial_scale;
 }
 
 pub(crate) fn world_chunking_for_preview(
@@ -76,7 +86,8 @@ fn fit_scale_for_bounds(bounds: Rect, preview: &MapPreviewState) -> f32 {
     let scale_x = size.x.abs() / width;
     let scale_y = size.y.abs() / height;
 
-    (scale_x.max(scale_y) * WORLD_SCALE_PADDING).clamp(0.2, 30.0)
+    (scale_x.max(scale_y) * WORLD_SCALE_PADDING)
+        .clamp(MIN_INITIAL_WORLD_SCALE, MAX_INITIAL_WORLD_SCALE)
 }
 
 fn world_anchor_offset(tiled_world: &TiledWorldAsset, anchor: &TilemapAnchor) -> Vec2 {
@@ -98,4 +109,66 @@ fn world_anchor_offset(tiled_world: &TiledWorldAsset, anchor: &TilemapAnchor) ->
             (-0.5 - v.y) * (max.y - min.y) - min.y,
         ),
     }
+}
+
+fn limit_initial_scale_by_visible_maps(
+    tiled_world: &TiledWorldAsset,
+    anchor: &TilemapAnchor,
+    center: Vec2,
+    preview: &MapPreviewState,
+    fitted_scale: f32,
+) -> f32 {
+    if count_initial_visible_maps(tiled_world, anchor, center, preview, fitted_scale)
+        <= MAX_INITIAL_VISIBLE_MAPS
+    {
+        return fitted_scale;
+    }
+
+    let mut low = MIN_INITIAL_WORLD_SCALE;
+    let mut high = fitted_scale;
+    for _ in 0..16 {
+        let mid = (low + high) * 0.5;
+        if count_initial_visible_maps(tiled_world, anchor, center, preview, mid)
+            > MAX_INITIAL_VISIBLE_MAPS
+        {
+            high = mid;
+        } else {
+            low = mid;
+        }
+    }
+
+    low
+}
+
+fn count_initial_visible_maps(
+    tiled_world: &TiledWorldAsset,
+    anchor: &TilemapAnchor,
+    center: Vec2,
+    preview: &MapPreviewState,
+    scale: f32,
+) -> usize {
+    let chunking = world_chunking_for_preview(preview, scale);
+    let Some(chunking) = chunking.0 else {
+        return tiled_world.maps.len();
+    };
+    let min = center - chunking;
+    let max = center + chunking;
+    let offset = world_anchor_offset(tiled_world, anchor);
+
+    tiled_world
+        .maps
+        .iter()
+        .filter(|(rect, _)| {
+            let displayed = Rect::new(
+                rect.min.x + offset.x,
+                rect.min.y + offset.y,
+                rect.max.x + offset.x,
+                rect.max.y + offset.y,
+            );
+            displayed.max.x >= min.x
+                && displayed.min.x <= max.x
+                && displayed.max.y >= min.y
+                && displayed.min.y <= max.y
+        })
+        .count()
 }
