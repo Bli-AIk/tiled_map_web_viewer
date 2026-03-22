@@ -7,15 +7,16 @@ use bevy_egui::{EguiContexts, EguiTextureHandle};
 use bevy_workbench::console::console_log_layer;
 use bevy_workbench::i18n::{I18n, Locale};
 use bevy_workbench::prelude::*;
-use serde::{Deserialize, Serialize};
 
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::RwLock;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
+mod manifest;
 mod panels;
 
+pub use manifest::{MapAssetKind, MapBadge, MapDetail, MapManifest, MapManifestEntry};
 use panels::{MapDetailsPanel, MapListPanel, MapPreviewPanel};
 
 // --- Public API ---
@@ -51,53 +52,6 @@ pub struct MapListView {
     pub default_visible: bool,
     /// Optional manifest section key to filter this panel by.
     pub section_filter: Option<String>,
-}
-
-/// One compact badge rendered next to a map entry.
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
-pub struct MapBadge {
-    pub label: String,
-    #[serde(default)]
-    pub tone: Option<String>,
-}
-
-/// One detail row shown in the details panel.
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
-pub struct MapDetail {
-    pub label: String,
-    pub value: String,
-}
-
-/// One map entry loaded from a structured manifest.
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
-pub struct MapManifestEntry {
-    pub path: String,
-    pub title: String,
-    #[serde(default)]
-    pub section: Option<String>,
-    #[serde(default)]
-    pub category: Option<String>,
-    #[serde(default)]
-    pub badges: Vec<MapBadge>,
-    #[serde(default)]
-    pub details: Vec<MapDetail>,
-}
-
-impl MapManifestEntry {
-    pub fn display_title(&self) -> &str {
-        if self.title.is_empty() {
-            &self.path
-        } else {
-            &self.title
-        }
-    }
-}
-
-/// Top-level manifest file consumed by the viewer.
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
-pub struct MapManifest {
-    #[serde(default)]
-    pub maps: Vec<MapManifestEntry>,
 }
 
 /// Top-level configuration for the viewer application.
@@ -400,6 +354,7 @@ struct Translations {
     list_other_group: String,
     details_no_selection: String,
     details_path: String,
+    details_kind: String,
     details_section: String,
     details_category: String,
     details_badges: String,
@@ -429,6 +384,7 @@ impl Translations {
             list_other_group: i18n.t("list-other-group"),
             details_no_selection: i18n.t("details-no-selection"),
             details_path: i18n.t("details-path"),
+            details_kind: i18n.t("details-kind"),
             details_section: i18n.t("details-section"),
             details_category: i18n.t("details-category"),
             details_badges: i18n.t("details-badges"),
@@ -443,14 +399,14 @@ pub(crate) type SharedTranslations = Arc<RwLock<Translations>>;
 
 #[derive(Resource, Default)]
 struct MapLoadRequest {
-    map_to_load: Option<String>,
+    entry_to_load: Option<MapManifestEntry>,
 }
 
 #[derive(Resource, Default)]
 struct MapLoadingState {
     phase: LoadPhase,
-    current_map: Option<String>,
-    pending_handle: Option<Handle<TiledMapAsset>>,
+    current_entry: Option<MapManifestEntry>,
+    pending_asset: Option<PendingAssetHandle>,
     status_text: String,
 }
 
@@ -461,6 +417,11 @@ enum LoadPhase {
     Cleanup,
     LoadingAssets,
     Spawning,
+}
+
+enum PendingAssetHandle {
+    Map(Handle<TiledMapAsset>),
+    World(Handle<TiledWorldAsset>),
 }
 
 #[derive(Resource)]
@@ -639,19 +600,22 @@ fn handle_map_load(
     mut load_request: ResMut<MapLoadRequest>,
     mut loading: ResMut<MapLoadingState>,
     i18n: Res<I18n>,
-    existing_maps: Query<Entity, With<TiledMap>>,
+    existing_assets: Query<(Entity, Has<TiledMap>, Has<TiledWorld>, Option<&ChildOf>)>,
 ) {
-    let Some(map_name) = load_request.map_to_load.take() else {
+    let Some(entry) = load_request.entry_to_load.take() else {
         return;
     };
 
-    for entity in &existing_maps {
-        commands.entity(entity).despawn();
+    for (entity, has_map, has_world, child_of) in &existing_assets {
+        let is_standalone_map = has_map && child_of.is_none();
+        if has_world || is_standalone_map {
+            commands.entity(entity).despawn();
+        }
     }
 
     loading.phase = LoadPhase::Cleanup;
-    loading.current_map = Some(map_name);
-    loading.pending_handle = None;
+    loading.current_entry = Some(entry);
+    loading.pending_asset = None;
     loading.status_text = i18n.t("loading-cleanup");
 }
 
@@ -661,24 +625,43 @@ fn track_map_loading(
     asset_server: Res<AssetServer>,
     i18n: Res<I18n>,
     maps: Query<&Children, With<TiledMap>>,
+    worlds: Query<&TiledWorldStorage, With<TiledWorld>>,
 ) {
     match loading.phase {
         LoadPhase::Idle => {}
         LoadPhase::Cleanup => {
-            if let Some(ref map_name) = loading.current_map.clone() {
-                let handle: Handle<TiledMapAsset> = asset_server.load(map_name);
-                loading.pending_handle = Some(handle);
+            if let Some(ref entry) = loading.current_entry.clone() {
+                loading.pending_asset = Some(match entry.asset_kind() {
+                    MapAssetKind::Map => PendingAssetHandle::Map(asset_server.load(&entry.path)),
+                    MapAssetKind::World => {
+                        PendingAssetHandle::World(asset_server.load(&entry.path))
+                    }
+                });
                 loading.phase = LoadPhase::LoadingAssets;
                 loading.status_text = i18n.t("loading-textures");
-                info!("Loading map: {}", map_name);
+                info!("Loading {}: {}", entry.asset_kind().label(), entry.path);
             }
         }
         LoadPhase::LoadingAssets => {
-            if let Some(ref handle) = loading.pending_handle {
-                let load_state = asset_server.recursive_dependency_load_state(handle);
+            if let Some(ref pending_asset) = loading.pending_asset {
+                let load_state = match pending_asset {
+                    PendingAssetHandle::Map(handle) => {
+                        asset_server.recursive_dependency_load_state(handle)
+                    }
+                    PendingAssetHandle::World(handle) => {
+                        asset_server.recursive_dependency_load_state(handle)
+                    }
+                };
                 match load_state {
                     RecursiveDependencyLoadState::Loaded => {
-                        commands.spawn((TiledMap(handle.clone()), TilemapAnchor::Center));
+                        match pending_asset {
+                            PendingAssetHandle::Map(handle) => {
+                                commands.spawn((TiledMap(handle.clone()), TilemapAnchor::Center));
+                            }
+                            PendingAssetHandle::World(handle) => {
+                                commands.spawn((TiledWorld(handle.clone()), TilemapAnchor::Center));
+                            }
+                        }
                         loading.phase = LoadPhase::Spawning;
                         loading.status_text = i18n.t("loading-spawning");
                     }
@@ -694,12 +677,31 @@ fn track_map_loading(
             }
         }
         LoadPhase::Spawning => {
-            for children in &maps {
-                if !children.is_empty() {
-                    loading.phase = LoadPhase::Idle;
-                    loading.status_text.clear();
-                    loading.pending_handle = None;
+            let mut finished = false;
+            match loading.pending_asset {
+                Some(PendingAssetHandle::Map(_)) => {
+                    for children in &maps {
+                        if !children.is_empty() {
+                            finished = true;
+                            break;
+                        }
+                    }
                 }
+                Some(PendingAssetHandle::World(_)) => {
+                    for storage in &worlds {
+                        if storage.maps().next().is_some() {
+                            finished = true;
+                            break;
+                        }
+                    }
+                }
+                None => {}
+            }
+
+            if finished {
+                loading.phase = LoadPhase::Idle;
+                loading.status_text.clear();
+                loading.pending_asset = None;
             }
         }
     }

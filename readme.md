@@ -14,9 +14,11 @@
 ## Introduction
 
 `tiled_map_web_viewer` is a lightweight Tiled map viewer built with Bevy and WebAssembly.  
-It is designed for open-source game map library maintainers who want to provide an interactive web preview of their `.tmx` map collections directly on GitHub Pages.
+It is designed for open-source game map library maintainers who want to provide an interactive web preview of their `.tmx` and `.world` map collections directly on GitHub Pages.
 
 With `tiled_map_web_viewer`, you only need to deploy a WASM build alongside your map assets to give contributors and users a visual browser for your map library — no desktop installation required.
+
+The repository also bundles sample assets derived from [The Mana World client data](https://github.com/themanaworld/tmwa-client-data). See [assets/NOTICE](assets/NOTICE) for attribution and license details.
 
 ## Why Tiled?
 
@@ -32,7 +34,7 @@ By choosing Tiled as the base format, `tiled_map_web_viewer` can **adapt to the 
 * **Layer Visibility Control** — Toggle individual map layers on/off
 * **Camera Controls** — Zoom and pan to explore maps
 * **Desktop & WASM** — Run natively or deploy to GitHub Pages
-* (Planned) World map support (`.world` files with multi-map stitching)
+* **World Support** — Load `.world` files and preview stitched multi-map layouts
 
 ## How to Use
 

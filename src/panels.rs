@@ -4,6 +4,7 @@ use bevy_workbench::dock::WorkbenchPanel;
 use crate::{
     MapCategory, MapListView, MapLoadRequest, MapManifest, MapManifestEntry, MapSection,
     SectionVisibilityState, SelectedMapDetails, SharedTranslations,
+    manifest::manifest_entry_from_path,
 };
 
 #[derive(Default)]
@@ -46,7 +47,7 @@ impl WorkbenchPanel for MapPreviewPanel {
     fn ui(&mut self, ui: &mut egui::Ui) {
         let Some(tex_id) = self.egui_texture_id else {
             ui.centered_and_justified(|ui| {
-                ui.label("Select a map from the Map List panel");
+                ui.label("Select a map or world from the Map List panel");
             });
             return;
         };
@@ -174,6 +175,7 @@ impl WorkbenchPanel for MapDetailsPanel {
         ui.heading(selected.display_title());
         ui.separator();
         details_row(ui, &t.details_path, &selected.path);
+        details_row(ui, &t.details_kind, selected.asset_kind().label());
         if let Some(section) = &selected.section {
             details_row(ui, &t.details_section, section);
         }
@@ -325,7 +327,7 @@ impl MapListPanel {
             self.maps = text
                 .lines()
                 .filter(|l| !l.trim().is_empty())
-                .map(default_entry_from_path)
+                .map(manifest_entry_from_path)
                 .collect();
         }
     }
@@ -452,7 +454,7 @@ impl WorkbenchPanel for MapListPanel {
 
             if let Some(target) = load_target {
                 self.selected = Some(target.path.clone());
-                world.resource_mut::<MapLoadRequest>().map_to_load = Some(target.path.clone());
+                world.resource_mut::<MapLoadRequest>().entry_to_load = Some(target.clone());
                 world.resource_mut::<SelectedMapDetails>().0 = Some(target);
             }
         });
@@ -576,25 +578,13 @@ fn walk_dir_collect(
         let path = entry.path();
         if path.is_dir() {
             walk_dir_collect(&path, base, maps);
-        } else if path.extension().is_some_and(|ext| ext == "tmx")
+        } else if path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .is_some_and(|ext| matches!(ext.to_ascii_lowercase().as_str(), "tmx" | "world"))
             && let Ok(rel) = path.strip_prefix(base)
         {
-            maps.push(default_entry_from_path(rel.to_string_lossy().as_ref()));
+            maps.push(manifest_entry_from_path(rel.to_string_lossy().as_ref()));
         }
-    }
-}
-
-fn default_entry_from_path(path: &str) -> MapManifestEntry {
-    let normalized = path.replace('\\', "/");
-    let title = std::path::Path::new(&normalized)
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or(&normalized)
-        .to_string();
-
-    MapManifestEntry {
-        path: normalized,
-        title,
-        ..Default::default()
     }
 }
