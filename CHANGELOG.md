@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0](https://github.com/Bli-AIk/tiled_map_web_viewer/compare/v0.1.2...v0.2.0) - 2026-03-22
+
+### Added
+
+- add manifest-driven map browser UI ([#6](https://github.com/Bli-AIk/tiled_map_web_viewer/pull/6))
+
 ## [0.1.2](https://github.com/Bli-AIk/tiled_map_web_viewer/compare/v0.1.1...v0.1.2) - 2026-03-08
 
 ### Fixed
