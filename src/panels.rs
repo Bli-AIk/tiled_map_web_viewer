@@ -147,7 +147,7 @@ impl MapDetailsPanel {
 
 impl WorkbenchPanel for MapDetailsPanel {
     fn id(&self) -> &str {
-        "map_details"
+        "map_details_inspector"
     }
 
     fn title(&self) -> String {
@@ -344,7 +344,13 @@ impl WorkbenchPanel for MapListPanel {
 
     fn ui_world(&mut self, ui: &mut egui::Ui, world: &mut World) {
         if !self.scanned {
+            if let Some(mut overlay) = world.get_resource_mut::<crate::WebLoadingOverlayState>() {
+                overlay.show_with(&self.translations, |t| t.list_loading_maps.clone(), 0.45);
+            }
             self.scan_maps();
+            if let Some(mut overlay) = world.get_resource_mut::<crate::WebLoadingOverlayState>() {
+                overlay.finish();
+            }
         }
 
         let visible_sections = world.resource::<SectionVisibilityState>().0.clone();
