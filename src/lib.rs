@@ -725,6 +725,13 @@ fn track_map_loading(
                     }
                 }
                 Some(PendingAssetHandle::World(_)) => {
+                    for storage in &worlds {
+                        if storage.maps().next().is_some() {
+                            finished = true;
+                            break;
+                        }
+                    }
+
                     for (children, child_of) in &maps {
                         if child_of.is_some() && !children.is_empty() {
                             finished = true;

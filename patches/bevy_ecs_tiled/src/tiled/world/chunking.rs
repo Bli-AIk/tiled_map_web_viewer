@@ -37,7 +37,7 @@ pub(crate) fn plugin(app: &mut App) {
 }
 
 fn handle_world_chunking(
-    camera_query: Query<&Transform, (With<Camera>, Changed<Transform>)>,
+    camera_query: Query<&Transform, With<Camera>>,
     worlds: Res<Assets<TiledWorldAsset>>,
     asset_server: Res<AssetServer>,
     mut commands: Commands,
