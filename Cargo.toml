@@ -1,6 +1,6 @@
 [package]
 name = "tiled_map_web_viewer"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2024"
 authors = ["Bli_AIk"]
 license = "GPL-3.0-or-later"
