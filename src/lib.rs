@@ -1,5 +1,6 @@
 use bevy::asset::{AssetMetaCheck, RecursiveDependencyLoadState};
 use bevy::camera::RenderTarget;
+use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use bevy::render::render_resource::TextureFormat;
 use bevy_ecs_tiled::prelude::*;
@@ -9,6 +10,7 @@ use bevy_workbench::i18n::{I18n, Locale};
 use bevy_workbench::prelude::*;
 
 use std::collections::HashMap;
+#[cfg(not(target_arch = "wasm32"))]
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::RwLock;
@@ -17,11 +19,19 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 mod cleanup;
 mod manifest;
 mod panels;
+mod render_settings;
+mod translations;
 mod world_view;
 
 use cleanup::{PendingCleanup, handle_map_load, process_pending_cleanup};
 pub use manifest::{MapAssetKind, MapBadge, MapDetail, MapManifest, MapManifestEntry};
 use panels::{MapDetailsPanel, MapListPanel, MapPreviewPanel};
+use render_settings::{
+    RenderSettingsPanel, RenderSettingsState, apply_preview_render_settings, draw_preview_gizmos,
+    ensure_render_settings_dock_layout,
+};
+pub(crate) use translations::SharedTranslations;
+use translations::Translations;
 use world_view::{
     focus_preview_camera_for_map, focus_preview_camera_for_world, world_chunking_for_preview,
 };
@@ -184,6 +194,7 @@ pub fn run(config: ViewerConfig) {
         .init_resource::<PendingCleanup>()
         .init_resource::<PreviewInput>()
         .init_resource::<CameraZoomState>()
+        .init_resource::<RenderSettingsState>()
         .init_resource::<DevWindowsEnabled>()
         .insert_resource(SectionVisibilityState::from_sections(&config.sections))
         .init_resource::<SelectedMapDetails>()
@@ -200,6 +211,9 @@ pub fn run(config: ViewerConfig) {
                 sync_preview_to_panel,
                 apply_camera_zoom,
                 apply_camera_pan,
+                apply_preview_render_settings,
+                draw_preview_gizmos,
+                ensure_render_settings_dock_layout,
                 handle_dev_menu_actions,
                 notify_web_loader_ready,
             ),
@@ -224,6 +238,8 @@ pub fn run(config: ViewerConfig) {
     app.register_panel(MapPreviewPanel::new(t_for_preview));
     let t_for_details = shared_translations.clone();
     app.register_panel(MapDetailsPanel::new(t_for_details));
+    let t_for_render_settings = shared_translations.clone();
+    app.register_panel(RenderSettingsPanel::new(t_for_render_settings));
 
     // Hide Inspector and Console
     {
@@ -366,74 +382,6 @@ fn default_asset_file_path() -> String {
 
 // --- Internal types ---
 
-#[derive(Clone, Default)]
-#[allow(dead_code)]
-struct Translations {
-    allow_dev_windows: String,
-    zoom_sensitivity: String,
-    pan_sensitivity: String,
-    developer_label: String,
-    sensitivity_label: String,
-    map_sections_label: String,
-    settings_visible_sections_hint: String,
-    dev_windows_menu: String,
-    inspector: String,
-    console: String,
-    map_list: String,
-    map_preview: String,
-    map_details: String,
-    list_loading_maps: String,
-    list_no_maps: String,
-    list_other_group: String,
-    list_maps_group: String,
-    list_worlds_group: String,
-    details_no_selection: String,
-    details_path: String,
-    details_kind: String,
-    details_section: String,
-    details_category: String,
-    details_badges: String,
-    loading_cleanup: String,
-    loading_textures: String,
-    loading_spawning: String,
-}
-
-impl Translations {
-    fn from_i18n(i18n: &I18n) -> Self {
-        Self {
-            allow_dev_windows: i18n.t("settings-allow-dev-windows"),
-            zoom_sensitivity: i18n.t("settings-zoom-sensitivity"),
-            pan_sensitivity: i18n.t("settings-pan-sensitivity"),
-            developer_label: i18n.t("settings-developer"),
-            sensitivity_label: i18n.t("settings-sensitivity"),
-            map_sections_label: i18n.t("settings-map-sections"),
-            settings_visible_sections_hint: i18n.t("settings-visible-sections-hint"),
-            dev_windows_menu: i18n.t("menu-dev-windows"),
-            inspector: i18n.t("menu-dev-inspector"),
-            console: i18n.t("menu-dev-console"),
-            map_list: i18n.t("panel-map-list"),
-            map_preview: i18n.t("panel-map-preview"),
-            map_details: i18n.t("panel-map-details"),
-            list_loading_maps: i18n.t("list-loading-maps"),
-            list_no_maps: i18n.t("list-no-maps"),
-            list_other_group: i18n.t("list-other-group"),
-            list_maps_group: i18n.t("list-maps-group"),
-            list_worlds_group: i18n.t("list-worlds-group"),
-            details_no_selection: i18n.t("details-no-selection"),
-            details_path: i18n.t("details-path"),
-            details_kind: i18n.t("details-kind"),
-            details_section: i18n.t("details-section"),
-            details_category: i18n.t("details-category"),
-            details_badges: i18n.t("details-badges"),
-            loading_cleanup: i18n.t("loading-cleanup"),
-            loading_textures: i18n.t("loading-textures"),
-            loading_spawning: i18n.t("loading-spawning"),
-        }
-    }
-}
-
-pub(crate) type SharedTranslations = Arc<RwLock<Translations>>;
-
 #[derive(Resource, Default)]
 struct MapLoadRequest {
     entry_to_load: Option<MapManifestEntry>,
@@ -539,6 +487,17 @@ impl Default for ScrollSensitivity {
 #[derive(Component)]
 struct PreviewCamera;
 
+#[derive(SystemParam)]
+struct LoadingContext<'w, 's> {
+    commands: Commands<'w, 's>,
+    asset_server: Res<'w, AssetServer>,
+    i18n: Res<'w, I18n>,
+    world_assets: Res<'w, Assets<TiledWorldAsset>>,
+    maps: Query<'w, 's, (&'static Children, Option<&'static ChildOf>), With<TiledMap>>,
+    worlds: Query<'w, 's, &'static TiledWorldStorage, With<TiledWorld>>,
+    preview_camera: Query<'w, 's, &'static mut Transform, With<PreviewCamera>>,
+}
+
 // --- Systems ---
 
 fn setup(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
@@ -548,6 +507,7 @@ fn setup(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
     let image = Image::new_target_texture(width, height, TextureFormat::Rgba8UnormSrgb, None);
     let render_target = images.add(image);
 
+    // Keep a primary window camera so Workbench / egui can render normally.
     commands.spawn(Camera2d);
     commands.spawn((
         Camera2d,
@@ -633,32 +593,28 @@ fn handle_dev_menu_actions(
 }
 
 fn track_map_loading(
-    mut commands: Commands,
     mut loading: ResMut<MapLoadingState>,
     cleanup: Res<PendingCleanup>,
-    asset_server: Res<AssetServer>,
-    i18n: Res<I18n>,
-    world_assets: Res<Assets<TiledWorldAsset>>,
-    maps: Query<(&Children, Option<&ChildOf>), With<TiledMap>>,
-    worlds: Query<&TiledWorldStorage, With<TiledWorld>>,
     preview: Res<MapPreviewState>,
     mut zoom_state: ResMut<CameraZoomState>,
-    mut preview_camera: Query<&mut Transform, With<PreviewCamera>>,
+    mut ctx: LoadingContext,
 ) {
     match loading.phase {
         LoadPhase::Idle => {}
         LoadPhase::Cleanup => {
             if !cleanup.is_empty() {
-                loading.status_text = i18n.t("loading-cleanup");
+                loading.status_text = ctx.i18n.t("loading-cleanup");
             } else if let Some(ref entry) = loading.current_entry.clone() {
                 loading.pending_asset = Some(match entry.asset_kind() {
-                    MapAssetKind::Map => PendingAssetHandle::Map(asset_server.load(&entry.path)),
+                    MapAssetKind::Map => {
+                        PendingAssetHandle::Map(ctx.asset_server.load(&entry.path))
+                    }
                     MapAssetKind::World => {
-                        PendingAssetHandle::World(asset_server.load(&entry.path))
+                        PendingAssetHandle::World(ctx.asset_server.load(&entry.path))
                     }
                 });
                 loading.phase = LoadPhase::LoadingAssets;
-                loading.status_text = i18n.t("loading-textures");
+                loading.status_text = ctx.i18n.t("loading-textures");
                 info!("Loading {}: {}", entry.asset_kind().label(), entry.path);
             }
         }
@@ -666,28 +622,36 @@ fn track_map_loading(
             if let Some(ref pending_asset) = loading.pending_asset {
                 let load_state = match pending_asset {
                     PendingAssetHandle::Map(handle) => {
-                        asset_server.recursive_dependency_load_state(handle)
+                        ctx.asset_server.recursive_dependency_load_state(handle)
                     }
-                    PendingAssetHandle::World(handle) => match asset_server.load_state(handle) {
-                        bevy::asset::LoadState::Loaded => RecursiveDependencyLoadState::Loaded,
-                        bevy::asset::LoadState::Loading => RecursiveDependencyLoadState::Loading,
-                        bevy::asset::LoadState::NotLoaded => {
-                            RecursiveDependencyLoadState::NotLoaded
+                    PendingAssetHandle::World(handle) => {
+                        match ctx.asset_server.load_state(handle) {
+                            bevy::asset::LoadState::Loaded => RecursiveDependencyLoadState::Loaded,
+                            bevy::asset::LoadState::Loading => {
+                                RecursiveDependencyLoadState::Loading
+                            }
+                            bevy::asset::LoadState::NotLoaded => {
+                                RecursiveDependencyLoadState::NotLoaded
+                            }
+                            bevy::asset::LoadState::Failed(error) => {
+                                RecursiveDependencyLoadState::Failed(error)
+                            }
                         }
-                        bevy::asset::LoadState::Failed(error) => {
-                            RecursiveDependencyLoadState::Failed(error)
-                        }
-                    },
+                    }
                 };
                 match load_state {
                     RecursiveDependencyLoadState::Loaded => {
                         match pending_asset {
                             PendingAssetHandle::Map(handle) => {
-                                focus_preview_camera_for_map(&mut preview_camera, &mut zoom_state);
-                                commands.spawn((TiledMap(handle.clone()), TilemapAnchor::Center));
+                                focus_preview_camera_for_map(
+                                    &mut ctx.preview_camera,
+                                    &mut zoom_state,
+                                );
+                                ctx.commands
+                                    .spawn((TiledMap(handle.clone()), TilemapAnchor::Center));
                             }
                             PendingAssetHandle::World(handle) => {
-                                let Some(tiled_world) = world_assets.get(handle) else {
+                                let Some(tiled_world) = ctx.world_assets.get(handle) else {
                                     error!("World asset loaded but unavailable in asset storage");
                                     loading.phase = LoadPhase::Idle;
                                     loading.status_text.clear();
@@ -695,12 +659,12 @@ fn track_map_loading(
                                     return;
                                 };
                                 focus_preview_camera_for_world(
-                                    &mut preview_camera,
+                                    &mut ctx.preview_camera,
                                     &mut zoom_state,
                                     &preview,
                                     tiled_world,
                                 );
-                                commands.spawn((
+                                ctx.commands.spawn((
                                     TiledWorld(handle.clone()),
                                     TilemapAnchor::Center,
                                     world_chunking_for_preview(&preview, zoom_state.target_scale),
@@ -708,7 +672,7 @@ fn track_map_loading(
                             }
                         }
                         loading.phase = LoadPhase::Spawning;
-                        loading.status_text = i18n.t("loading-spawning");
+                        loading.status_text = ctx.i18n.t("loading-spawning");
                     }
                     RecursiveDependencyLoadState::Failed(_) => {
                         error!("Failed to load map assets");
@@ -716,7 +680,7 @@ fn track_map_loading(
                         loading.status_text.clear();
                     }
                     _ => {
-                        loading.status_text = i18n.t("loading-textures");
+                        loading.status_text = ctx.i18n.t("loading-textures");
                     }
                 }
             }
@@ -725,7 +689,7 @@ fn track_map_loading(
             let mut finished = false;
             match loading.pending_asset {
                 Some(PendingAssetHandle::Map(_)) => {
-                    for (children, child_of) in &maps {
+                    for (children, child_of) in &ctx.maps {
                         if child_of.is_none() && !children.is_empty() {
                             finished = true;
                             break;
@@ -733,23 +697,23 @@ fn track_map_loading(
                     }
                 }
                 Some(PendingAssetHandle::World(_)) => {
-                    for storage in &worlds {
+                    for storage in &ctx.worlds {
                         if storage.maps().next().is_some() {
                             finished = true;
                             break;
                         }
                     }
 
-                    for (children, child_of) in &maps {
+                    for (children, child_of) in &ctx.maps {
                         if child_of.is_some() && !children.is_empty() {
                             finished = true;
                             break;
                         }
                     }
                     if !finished {
-                        for storage in &worlds {
+                        for storage in &ctx.worlds {
                             if storage.maps().next().is_some() {
-                                loading.status_text = i18n.t("loading-spawning");
+                                loading.status_text = ctx.i18n.t("loading-spawning");
                             }
                         }
                     }

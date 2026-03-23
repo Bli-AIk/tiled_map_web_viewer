@@ -7,6 +7,15 @@ use crate::{LoadPhase, MapLoadRequest, MapLoadingState};
 const MAP_LAYER_CLEANUP_BATCH: usize = 4;
 const WORLD_MAP_CLEANUP_BATCH: usize = 1;
 
+type ExistingAssetEntry<'a> = (
+    Entity,
+    Has<TiledMap>,
+    Has<TiledWorld>,
+    Option<&'a ChildOf>,
+    &'a mut Visibility,
+);
+type ExistingRootFilter = Or<(With<TiledMap>, With<TiledWorld>)>;
+
 #[derive(Resource, Default)]
 pub(crate) struct PendingCleanup {
     queue: VecDeque<CleanupTarget>,
@@ -38,13 +47,7 @@ pub(crate) fn handle_map_load(
     mut loading: ResMut<MapLoadingState>,
     mut cleanup: ResMut<PendingCleanup>,
     i18n: Res<bevy_workbench::i18n::I18n>,
-    mut existing_assets: Query<(
-        Entity,
-        Has<TiledMap>,
-        Has<TiledWorld>,
-        Option<&ChildOf>,
-        &mut Visibility,
-    )>,
+    mut existing_assets: Query<ExistingAssetEntry<'_>>,
 ) {
     let Some(entry) = load_request.entry_to_load.take() else {
         return;
@@ -74,7 +77,7 @@ pub(crate) fn process_pending_cleanup(
     mut cleanup: ResMut<PendingCleanup>,
     map_roots: Query<(Entity, Option<&Children>), With<TiledMap>>,
     world_roots: Query<(Entity, Option<&Children>), With<TiledWorld>>,
-    existing_roots: Query<Entity, Or<(With<TiledMap>, With<TiledWorld>)>>,
+    existing_roots: Query<Entity, ExistingRootFilter>,
 ) {
     if cleanup.is_empty() {
         return;

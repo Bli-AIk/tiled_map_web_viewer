@@ -16,6 +16,7 @@ menu-dev-console = 控制台
 panel-map-list = 地图列表
 panel-map-preview = 地图预览
 panel-map-details = 地图详情
+panel-render-settings = 渲染设置
 list-loading-maps = 正在加载地图列表...
 list-no-maps = Manifest 中没有找到可用条目。
 list-other-group = 其他
@@ -27,6 +28,14 @@ details-kind = 类型：
 details-section = 分区：
 details-category = 分类：
 details-badges = 徽章
+render-background = 渲染区域背景
+render-background-hint = 控制预览视口的清屏颜色。
+render-preview-grid = 显示地图网格
+render-preview-grid-color = 地图网格颜色
+render-preview-grid-hint = 为规则的正交方格地图绘制瓦片网格。
+render-world-grid = 显示 World 网格
+render-world-grid-color = World 网格颜色
+render-world-grid-hint = 为已加载 World 内的每个地图片段绘制边界。
 
 # 加载状态
 loading-cleanup = 正在清理上一项内容...

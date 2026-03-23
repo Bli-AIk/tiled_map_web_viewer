@@ -76,7 +76,7 @@ fn displayed_world_bounds(tiled_world: &TiledWorldAsset, anchor: &TilemapAnchor)
             )
         })
         .reduce(|bounds, rect| bounds.union(rect))
-        .unwrap_or_else(|| tiled_world.rect)
+        .unwrap_or(tiled_world.rect)
 }
 
 fn fit_scale_for_bounds(bounds: Rect, preview: &MapPreviewState) -> f32 {

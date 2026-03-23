@@ -16,6 +16,7 @@ menu-dev-console = Console
 panel-map-list = Map List
 panel-map-preview = Map Preview
 panel-map-details = Map Details
+panel-render-settings = Render Settings
 list-loading-maps = Loading map list...
 list-no-maps = No entries found in the manifest.
 list-other-group = Other
@@ -27,6 +28,14 @@ details-kind = Kind:
 details-section = Section:
 details-category = Category:
 details-badges = Badges
+render-background = Preview Background
+render-background-hint = Controls the preview viewport clear color.
+render-preview-grid = Show Preview Grid
+render-preview-grid-color = Preview Grid Color
+render-preview-grid-hint = Draws the tile grid for regular square maps.
+render-world-grid = Show World Grid
+render-world-grid-color = World Grid Color
+render-world-grid-hint = Draws borders for each map piece inside a loaded world.
 
 # Loading states
 loading-cleanup = Cleaning up previous entry...
