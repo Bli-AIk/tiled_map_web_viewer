@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate assets/manifest.txt listing all .tmx files under assets/."""
+"""Generate assets/manifest.txt listing all .tmx/.world files under assets/."""
 import os
 import sys
 
@@ -8,7 +8,7 @@ maps = []
 
 for root, _dirs, files in os.walk(assets_dir):
     for f in sorted(files):
-        if f.lower().endswith(".tmx"):
+        if f.lower().endswith((".tmx", ".world")):
             rel = os.path.relpath(os.path.join(root, f), assets_dir)
             maps.append(rel)
 

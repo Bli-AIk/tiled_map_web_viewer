@@ -5495,6 +5495,7 @@ dependencies = [
  "bevy_egui",
  "bevy_workbench",
  "egui",
+ "egui_tiles",
  "getrandom 0.2.17",
  "serde",
  "serde_json",

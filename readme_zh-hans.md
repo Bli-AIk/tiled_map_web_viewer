@@ -14,9 +14,11 @@
 ## 简介
 
 `tiled_map_web_viewer` 是一个基于 Bevy 和 WebAssembly 构建的轻量级 Tiled 地图浏览器。  
-它专为开源游戏地图库的维护者设计，让他们能够直接在 GitHub Pages 上提供 `.tmx` 地图集合的交互式 Web 预览。
+它专为开源游戏地图库的维护者设计，让他们能够直接在 GitHub Pages 上提供 `.tmx` 与 `.world` 地图集合的交互式 Web 预览。
 
 使用 `tiled_map_web_viewer`，你只需要将 WASM 构建产物与地图资源一起部署，即可为贡献者和用户提供可视化的地图浏览器——无需安装桌面应用。
+
+仓库中还包含一组来源于 [The Mana World client data](https://github.com/themanaworld/tmwa-client-data) 的示例资源。相关来源与许可证说明见 [assets/NOTICE](assets/NOTICE)。
 
 ## 为什么选择 Tiled？
 
@@ -32,7 +34,7 @@
 * **图层可见性控制** — 单独切换各地图图层的显示/隐藏
 * **相机控制** — 缩放和平移以探索地图
 * **桌面版 & WASM** — 原生运行或部署到 GitHub Pages
-* （计划中）世界地图支持（`.world` 文件多地图拼接）
+* **世界地图支持** — 加载 `.world` 文件并预览多地图拼接布局
 
 ## 使用方法
 
