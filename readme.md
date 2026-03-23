@@ -3,7 +3,7 @@
 [![license](https://img.shields.io/badge/license-GPL--3.0--or--later-blue)](LICENSE) <img src="https://img.shields.io/github/repo-size/Bli-AIk/tiled_map_web_viewer.svg"/> <img src="https://img.shields.io/github/last-commit/Bli-AIk/tiled_map_web_viewer.svg"/> <br>
 <img src="https://img.shields.io/badge/Rust-000000?style=for-the-badge&logo=rust&logoColor=white" /> <img src="https://img.shields.io/badge/Bevy-232326?style=for-the-badge&logo=bevy&logoColor=white" />
 
-> Current Status: 🚧 Early Development (Initial version in progress)
+> Current Status: ✅ Usable for map-library preview workflows, with ongoing polish on large-world loading and project-specific integrations.
 
 **tiled_map_web_viewer** — A web-based Tiled map viewer designed for open-source map library projects to preview their map collections via GitHub Pages.
 
@@ -35,6 +35,25 @@ By choosing Tiled as the base format, `tiled_map_web_viewer` can **adapt to the 
 * **Camera Controls** — Zoom and pan to explore maps
 * **Desktop & WASM** — Run natively or deploy to GitHub Pages
 * **World Support** — Load `.world` files and preview stitched multi-map layouts
+* **Render Settings Dock** — Adjust preview background, preview grid, and world border overlays
+
+## Current Support Status
+
+### Supported
+
+* Standalone `.tmx` maps
+* Tiled `.world` files with multi-map stitched layouts
+* Structured manifest-driven map lists
+* Fallback path-based discovery when no structured manifest is provided
+* Separate world/map grouping in the sample viewer
+* Native desktop preview and WebAssembly deployment
+* Preview render controls for background color, preview grid, and world borders
+
+### Current Limitations
+
+* Large `.world` files can still take noticeable time to open, especially in WASM
+* The crate only provides generic viewer capabilities; project-specific metadata, labels, and workflows must be supplied by the host application
+* The sample viewer is intentionally minimal and is not a full replacement for Tiled itself
 
 ## How to Use
 
@@ -98,7 +117,7 @@ This project uses the following crates:
 | Crate | Version | Description |
 |-------|---------|-------------|
 | [bevy](https://crates.io/crates/bevy) | 0.18 | Game engine framework |
-| [bevy_workbench](https://crates.io/crates/bevy_workbench) | 0.2 | Editor scaffold with dock layout, inspector, and console |
+| [bevy_workbench](https://crates.io/crates/bevy_workbench) | 0.3 | Editor scaffold with dock layout, inspector, and console |
 | [bevy_ecs_tiled](https://crates.io/crates/bevy_ecs_tiled) | 0.11 | Tiled map loading and rendering via ECS |
 
 ## Contributing

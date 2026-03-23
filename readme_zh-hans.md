@@ -3,7 +3,7 @@
 [![license](https://img.shields.io/badge/license-GPL--3.0--or--later-blue)](LICENSE) <img src="https://img.shields.io/github/repo-size/Bli-AIk/tiled_map_web_viewer.svg"/> <img src="https://img.shields.io/github/last-commit/Bli-AIk/tiled_map_web_viewer.svg"/> <br>
 <img src="https://img.shields.io/badge/Rust-000000?style=for-the-badge&logo=rust&logoColor=white" /> <img src="https://img.shields.io/badge/Bevy-232326?style=for-the-badge&logo=bevy&logoColor=white" />
 
-> 当前状态：🚧 早期开发（初始版本开发中）
+> 当前状态：✅ 已可用于地图库预览工作流，但大型 World 加载体验和项目级集成仍在持续打磨。
 
 **tiled_map_web_viewer** — 面向开源地图库项目的 Web 端 Tiled 地图浏览器，可通过 GitHub Pages 在线预览地图集合。
 
@@ -35,6 +35,25 @@
 * **相机控制** — 缩放和平移以探索地图
 * **桌面版 & WASM** — 原生运行或部署到 GitHub Pages
 * **世界地图支持** — 加载 `.world` 文件并预览多地图拼接布局
+* **渲染设置 Dock** — 调整预览背景、预览网格和 World 描边叠加层
+
+## 当前支持情况
+
+### 已支持
+
+* 独立 `.tmx` 地图
+* 使用 `.world` 组织的多地图拼接布局
+* 基于结构化 manifest 的地图列表
+* 在没有结构化 manifest 时，基于路径的回退发现
+* 在示例浏览器中将普通地图与 World 分组显示
+* 原生桌面预览与 WebAssembly 部署
+* 预览背景色、预览网格、World 描边的渲染控制
+
+### 当前限制
+
+* 大型 `.world` 文件在 WASM 下打开时仍可能需要明显等待时间
+* 本 crate 只提供通用浏览器能力；项目专属元数据、标签与工作流仍需由宿主项目提供
+* 示例浏览器刻意保持简洁，不能替代 Tiled 编辑器本身
 
 ## 使用方法
 
@@ -98,7 +117,7 @@
 | Crate | 版本 | 描述 |
 |-------|------|------|
 | [bevy](https://crates.io/crates/bevy) | 0.18 | 游戏引擎框架 |
-| [bevy_workbench](https://crates.io/crates/bevy_workbench) | 0.2 | 编辑器脚手架，提供 Dock 布局、检查器和控制台 |
+| [bevy_workbench](https://crates.io/crates/bevy_workbench) | 0.3 | 编辑器脚手架，提供 Dock 布局、检查器和控制台 |
 | [bevy_ecs_tiled](https://crates.io/crates/bevy_ecs_tiled) | 0.11 | 基于 ECS 的 Tiled 地图加载与渲染 |
 
 ## 贡献
