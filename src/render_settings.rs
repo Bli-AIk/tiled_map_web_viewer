@@ -9,8 +9,8 @@ use bevy_workbench::dock::{TileLayoutState, WorkbenchPanel};
 use crate::{PreviewCamera, SharedTranslations};
 
 const PREVIEW_BG_DEFAULT: [u8; 4] = [26, 26, 38, 255];
-const PREVIEW_GRID_DEFAULT: [u8; 4] = [255, 255, 255, 96];
-const WORLD_GRID_DEFAULT: [u8; 4] = [102, 204, 255, 255];
+const PREVIEW_GRID_DEFAULT: [u8; 4] = [160, 160, 160, 96];
+const WORLD_GRID_DEFAULT: [u8; 4] = [255, 255, 255, 255];
 
 type PreviewMapEntry<'a> = (
     &'a TiledMap,
