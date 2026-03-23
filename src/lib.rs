@@ -87,6 +87,9 @@ pub struct ViewerConfig {
     pub categories: Vec<MapCategory>,
     /// Structured manifest path under the web assets root.
     pub manifest_path: String,
+    /// Optional Bevy asset root override.
+    /// When unset, the viewer falls back to its built-in asset root detection.
+    pub asset_root: Option<String>,
     /// Additional Fluent locale sources `(locale, ftl_content)` to register.
     pub locale_sources: Vec<(Locale, &'static str)>,
 }
@@ -100,6 +103,7 @@ impl Default for ViewerConfig {
             sections: vec![],
             categories: vec![],
             manifest_path: "assets/manifest.json".into(),
+            asset_root: None,
             locale_sources: vec![],
         }
     }
@@ -108,7 +112,10 @@ impl Default for ViewerConfig {
 /// Entry point — builds and runs the Bevy application with the given configuration.
 pub fn run(config: ViewerConfig) {
     let mut app = App::new();
-    let asset_file_path = default_asset_file_path();
+    let asset_file_path = config
+        .asset_root
+        .clone()
+        .unwrap_or_else(default_asset_file_path);
 
     let dev_toggle = Arc::new(AtomicBool::new(false));
     let section_toggles = Arc::new(RwLock::new(
@@ -667,7 +674,11 @@ fn track_map_loading(
                                 ctx.commands.spawn((
                                     TiledWorld(handle.clone()),
                                     TilemapAnchor::Center,
-                                    world_chunking_for_preview(&preview, zoom_state.target_scale),
+                                    world_chunking_for_preview(
+                                        tiled_world,
+                                        &preview,
+                                        zoom_state.target_scale,
+                                    ),
                                 ));
                             }
                         }
