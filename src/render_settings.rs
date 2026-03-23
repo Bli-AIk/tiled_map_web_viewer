@@ -158,8 +158,8 @@ pub(crate) fn draw_preview_gizmos(
 
     if settings.show_preview_grid {
         let color = color_from_rgba(settings.preview_grid_color);
-        for (map, child_of, anchor, transform, visibility) in &maps {
-            if child_of.is_some() || is_hidden(visibility) {
+        for (map, _child_of, anchor, transform, visibility) in &maps {
+            if is_hidden(visibility) {
                 continue;
             }
 

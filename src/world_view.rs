@@ -10,6 +10,7 @@ const WORLD_SCALE_PADDING: f32 = 1.1;
 const WORLD_CHUNK_PADDING: f32 = 1.1;
 const MAX_INITIAL_WORLD_SCALE: f32 = 8.0;
 const MAX_INITIAL_VISIBLE_MAPS: usize = 4;
+const MAX_UNCHUNKED_WORLD_MAPS: usize = 48;
 const MIN_WORLD_CHUNK_HALF_EXTENT: f32 = 512.0;
 
 pub(crate) fn focus_preview_camera_for_map(
@@ -39,27 +40,40 @@ pub(crate) fn focus_preview_camera_for_world(
     }
 
     let fitted_scale = fit_scale_for_bounds(bounds, preview);
-    let initial_scale = limit_initial_scale_by_visible_maps(
-        tiled_world,
-        &TilemapAnchor::Center,
-        center,
-        preview,
-        fitted_scale,
-    );
+    let initial_scale = if should_disable_chunking(tiled_world) {
+        fitted_scale
+    } else {
+        limit_initial_scale_by_visible_maps(
+            tiled_world,
+            &TilemapAnchor::Center,
+            center,
+            preview,
+            fitted_scale,
+        )
+    };
     zoom_state.current_scale = initial_scale;
     zoom_state.target_scale = initial_scale;
 }
 
 pub(crate) fn world_chunking_for_preview(
+    tiled_world: &TiledWorldAsset,
     preview: &MapPreviewState,
     scale: f32,
 ) -> TiledWorldChunking {
+    if should_disable_chunking(tiled_world) {
+        return TiledWorldChunking(None);
+    }
+
     let half_width =
         (preview.width as f32 * scale * 0.5 * WORLD_CHUNK_PADDING).max(MIN_WORLD_CHUNK_HALF_EXTENT);
     let half_height = (preview.height as f32 * scale * 0.5 * WORLD_CHUNK_PADDING)
         .max(MIN_WORLD_CHUNK_HALF_EXTENT);
 
     TiledWorldChunking::new(half_width, half_height)
+}
+
+fn should_disable_chunking(tiled_world: &TiledWorldAsset) -> bool {
+    tiled_world.maps.len() <= MAX_UNCHUNKED_WORLD_MAPS
 }
 
 fn displayed_world_bounds(tiled_world: &TiledWorldAsset, anchor: &TilemapAnchor) -> Rect {
@@ -147,7 +161,7 @@ fn count_initial_visible_maps(
     preview: &MapPreviewState,
     scale: f32,
 ) -> usize {
-    let chunking = world_chunking_for_preview(preview, scale);
+    let chunking = world_chunking_for_preview(tiled_world, preview, scale);
     let Some(chunking) = chunking.0 else {
         return tiled_world.maps.len();
     };
