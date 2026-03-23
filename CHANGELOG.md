@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0](https://github.com/Bli-AIk/tiled_map_web_viewer/compare/v0.3.0...v0.4.0) - 2026-03-23
+
+### Added
+
+- *(viewer)* add world support and render settings ([#14](https://github.com/Bli-AIk/tiled_map_web_viewer/pull/14))
+
 ## [0.3.0](https://github.com/Bli-AIk/tiled_map_web_viewer/compare/v0.2.2...v0.3.0) - 2026-03-22
 
 ### Added
