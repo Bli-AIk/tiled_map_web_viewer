@@ -1,5 +1,6 @@
 use bevy::color::Color;
 use bevy::prelude::*;
+use bevy::window::PrimaryWindow;
 use bevy_ecs_tiled::prelude::{
     TiledMap, TiledMapAsset, TiledWorld, TiledWorldAsset, TilemapAnchor, TilemapType,
     grid_size_from_map, tilemap_type_from_map,
@@ -47,6 +48,13 @@ impl Default for RenderSettingsState {
     }
 }
 
+#[derive(Resource, Default)]
+pub(crate) struct MobileWebUiState {
+    pub(crate) active: bool,
+    grid_defaults_applied: bool,
+    layout_applied: bool,
+}
+
 #[derive(Default)]
 pub(crate) struct RenderSettingsPanel {
     pub(crate) translations: SharedTranslations,
@@ -77,35 +85,48 @@ impl WorkbenchPanel for RenderSettingsPanel {
             ui.label("Translations unavailable");
             return;
         };
+        let mobile_web = world.resource::<MobileWebUiState>().active;
         let mut state = world.resource_mut::<RenderSettingsState>();
 
-        ui.heading(&t.render_settings);
-        ui.separator();
+        egui::ScrollArea::vertical()
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                ui.heading(&t.render_settings);
+                ui.separator();
 
-        color_row(
-            ui,
-            &t.render_background,
-            &mut state.preview_background,
-            &t.render_background_hint,
-        );
+                if mobile_web {
+                    ui.colored_label(
+                        egui::Color32::from_rgb(214, 173, 53),
+                        &t.render_android_grid_warning,
+                    );
+                    ui.separator();
+                }
 
-        ui.separator();
-        ui.checkbox(&mut state.show_preview_grid, &t.render_preview_grid);
-        color_row(
-            ui,
-            &t.render_preview_grid_color,
-            &mut state.preview_grid_color,
-            &t.render_preview_grid_hint,
-        );
+                color_row(
+                    ui,
+                    &t.render_background,
+                    &mut state.preview_background,
+                    &t.render_background_hint,
+                );
 
-        ui.separator();
-        ui.checkbox(&mut state.show_world_grid, &t.render_world_grid);
-        color_row(
-            ui,
-            &t.render_world_grid_color,
-            &mut state.world_grid_color,
-            &t.render_world_grid_hint,
-        );
+                ui.separator();
+                ui.checkbox(&mut state.show_preview_grid, &t.render_preview_grid);
+                color_row(
+                    ui,
+                    &t.render_preview_grid_color,
+                    &mut state.preview_grid_color,
+                    &t.render_preview_grid_hint,
+                );
+
+                ui.separator();
+                ui.checkbox(&mut state.show_world_grid, &t.render_world_grid);
+                color_row(
+                    ui,
+                    &t.render_world_grid_color,
+                    &mut state.world_grid_color,
+                    &t.render_world_grid_hint,
+                );
+            });
     }
 
     fn needs_world(&self) -> bool {
@@ -199,8 +220,13 @@ pub(crate) fn draw_preview_gizmos(
 
 pub(crate) fn ensure_render_settings_dock_layout(
     mut tile_state: ResMut<TileLayoutState>,
+    primary_window: Query<&Window, With<PrimaryWindow>>,
     mut applied: Local<bool>,
 ) {
+    if is_mobile_web_layout(primary_window.single().ok()) {
+        return;
+    }
+
     if *applied {
         return;
     }
@@ -279,11 +305,131 @@ pub(crate) fn ensure_render_settings_dock_layout(
     *applied = true;
 }
 
+pub(crate) fn ensure_mobile_web_dock_layout(
+    primary_window: Query<&Window, With<PrimaryWindow>>,
+    mut tile_state: ResMut<TileLayoutState>,
+    mut render_settings: ResMut<RenderSettingsState>,
+    mut mobile_state: ResMut<MobileWebUiState>,
+) {
+    let active = is_mobile_web_layout(primary_window.single().ok());
+    if mobile_state.active != active {
+        mobile_state.active = active;
+        mobile_state.layout_applied = false;
+        mobile_state.grid_defaults_applied = false;
+    }
+
+    if !mobile_state.active {
+        return;
+    }
+
+    if !mobile_state.grid_defaults_applied {
+        render_settings.show_preview_grid = false;
+        render_settings.show_world_grid = false;
+        mobile_state.grid_defaults_applied = true;
+    }
+
+    if mobile_state.layout_applied {
+        return;
+    }
+
+    if apply_mobile_web_layout(&mut tile_state) {
+        mobile_state.layout_applied = true;
+    }
+}
+
 fn find_panel_id(tile_state: &TileLayoutState, panel_str_id: &str) -> Option<usize> {
     tile_state
         .panels
         .iter()
         .find_map(|(panel_id, panel)| (panel.id() == panel_str_id).then_some(*panel_id))
+}
+
+fn find_panel_ids(tile_state: &TileLayoutState, pattern: &str) -> Vec<usize> {
+    let mut ids = tile_state
+        .panels
+        .iter()
+        .filter_map(|(panel_id, panel)| panel.id().contains(pattern).then_some(*panel_id))
+        .collect::<Vec<_>>();
+    ids.sort_unstable();
+    ids
+}
+
+fn apply_mobile_web_layout(tile_state: &mut TileLayoutState) -> bool {
+    let map_list_tiles = find_panel_ids(tile_state, "map_list")
+        .into_iter()
+        .filter(|panel_id| {
+            tile_state
+                .panels
+                .get(panel_id)
+                .map(|panel| tile_state.is_panel_visible(panel.id()))
+                .unwrap_or(false)
+        })
+        .filter_map(|panel_id| {
+            tile_state
+                .tree
+                .as_ref()
+                .and_then(|tree| find_panel_tile(tree, panel_id))
+        })
+        .collect::<Vec<_>>();
+    if map_list_tiles.is_empty() {
+        return false;
+    }
+
+    let Some(preview_panel_id) = find_panel_id(tile_state, "map_preview") else {
+        return false;
+    };
+    let Some(details_panel_id) = find_panel_id(tile_state, "map_details_inspector") else {
+        return false;
+    };
+    let Some(settings_panel_id) = find_panel_id(tile_state, "render_settings_inspector") else {
+        return false;
+    };
+    let Some(tree) = tile_state.tree.as_mut() else {
+        return false;
+    };
+    let Some(preview_tile) = find_panel_tile(tree, preview_panel_id) else {
+        return false;
+    };
+    let Some(details_tile) = find_panel_tile(tree, details_panel_id) else {
+        return false;
+    };
+    let Some(settings_tile) = find_panel_tile(tree, settings_panel_id) else {
+        return false;
+    };
+
+    for tile in map_list_tiles
+        .iter()
+        .chain([details_tile, settings_tile, preview_tile].iter())
+    {
+        if let Some(parent) = tree.tiles.parent_of(*tile)
+            && let Some(egui_tiles::Tile::Container(container)) = tree.tiles.get_mut(parent)
+        {
+            container.remove_child(*tile);
+        }
+    }
+
+    let left_top = tree.tiles.insert_tab_tile(map_list_tiles);
+    let right_top = tree
+        .tiles
+        .insert_tab_tile(vec![details_tile, settings_tile]);
+    let top_row = tree.tiles.insert_horizontal_tile(vec![left_top, right_top]);
+    if let Some(egui_tiles::Tile::Container(egui_tiles::Container::Linear(linear))) =
+        tree.tiles.get_mut(top_row)
+    {
+        linear.shares.set_share(left_top, 1.15);
+        linear.shares.set_share(right_top, 1.0);
+    }
+
+    let root = tree.tiles.insert_vertical_tile(vec![top_row, preview_tile]);
+    if let Some(egui_tiles::Tile::Container(egui_tiles::Container::Linear(linear))) =
+        tree.tiles.get_mut(root)
+    {
+        linear.shares.set_share(top_row, 1.35);
+        linear.shares.set_share(preview_tile, 4.65);
+    }
+
+    tree.root = Some(root);
+    true
 }
 
 fn find_panel_tile(
@@ -402,5 +548,21 @@ fn world_anchor_offset(asset: &TiledWorldAsset, anchor: &TilemapAnchor) -> Vec2 
             (-0.5 - v.x) * (max.x - min.x) - min.x,
             (-0.5 - v.y) * (max.y - min.y) - min.y,
         ),
+    }
+}
+
+fn is_mobile_web_layout(window: Option<&Window>) -> bool {
+    #[cfg(target_arch = "wasm32")]
+    {
+        let Some(window) = window else {
+            return false;
+        };
+        window.width() <= 900.0
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let _ = window;
+        false
     }
 }

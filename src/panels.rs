@@ -199,39 +199,42 @@ impl WorkbenchPanel for MapDetailsPanel {
             ui.label("Translations unavailable");
             return;
         };
+        egui::ScrollArea::vertical()
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                let Some(selected) = maybe_selected else {
+                    ui.label(&t.details_no_selection);
+                    return;
+                };
 
-        let Some(selected) = maybe_selected else {
-            ui.label(&t.details_no_selection);
-            return;
-        };
+                ui.heading(selected.display_title());
+                ui.separator();
+                details_row(ui, &t.details_path, &selected.path);
+                details_row(ui, &t.details_kind, selected.asset_kind().label());
+                if let Some(section) = &selected.section {
+                    details_row(ui, &t.details_section, section);
+                }
+                if let Some(category) = &selected.category {
+                    details_row(ui, &t.details_category, category);
+                }
 
-        ui.heading(selected.display_title());
-        ui.separator();
-        details_row(ui, &t.details_path, &selected.path);
-        details_row(ui, &t.details_kind, selected.asset_kind().label());
-        if let Some(section) = &selected.section {
-            details_row(ui, &t.details_section, section);
-        }
-        if let Some(category) = &selected.category {
-            details_row(ui, &t.details_category, category);
-        }
+                if !selected.badges.is_empty() {
+                    ui.separator();
+                    ui.label(egui::RichText::new(&t.details_badges).strong());
+                    ui.horizontal_wrapped(|ui| {
+                        for badge in &selected.badges {
+                            render_badge(ui, &badge.label, badge_color(badge.tone.as_deref()));
+                        }
+                    });
+                }
 
-        if !selected.badges.is_empty() {
-            ui.separator();
-            ui.label(egui::RichText::new(&t.details_badges).strong());
-            ui.horizontal_wrapped(|ui| {
-                for badge in &selected.badges {
-                    render_badge(ui, &badge.label, badge_color(badge.tone.as_deref()));
+                if !selected.details.is_empty() {
+                    ui.separator();
+                    for detail in &selected.details {
+                        details_row(ui, &detail.label, &detail.value);
+                    }
                 }
             });
-        }
-
-        if !selected.details.is_empty() {
-            ui.separator();
-            for detail in &selected.details {
-                details_row(ui, &detail.label, &detail.value);
-            }
-        }
     }
 
     fn needs_world(&self) -> bool {

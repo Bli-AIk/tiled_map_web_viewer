@@ -33,6 +33,7 @@ render-background-hint = 控制预览视口的清屏颜色。
 render-preview-grid = 显示地图网格
 render-preview-grid-color = 地图网格颜色
 render-preview-grid-hint = 为规则的正交方格地图绘制瓦片网格。
+render-android-grid-warning = 网格可能在 Android 上无法正常显示。
 render-world-grid = 显示 World 网格
 render-world-grid-color = World 网格颜色
 render-world-grid-hint = 为已加载 World 内的每个地图片段绘制边界。

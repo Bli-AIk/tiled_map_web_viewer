@@ -27,8 +27,8 @@ use cleanup::{PendingCleanup, handle_map_load, process_pending_cleanup};
 pub use manifest::{MapAssetKind, MapBadge, MapDetail, MapManifest, MapManifestEntry};
 use panels::{MapDetailsPanel, MapListPanel, MapPreviewPanel};
 use render_settings::{
-    RenderSettingsPanel, RenderSettingsState, apply_preview_render_settings, draw_preview_gizmos,
-    ensure_render_settings_dock_layout,
+    MobileWebUiState, RenderSettingsPanel, RenderSettingsState, apply_preview_render_settings,
+    draw_preview_gizmos, ensure_mobile_web_dock_layout, ensure_render_settings_dock_layout,
 };
 pub(crate) use translations::SharedTranslations;
 use translations::Translations;
@@ -220,6 +220,7 @@ fn build_app(config: ViewerConfig) -> App {
         .init_resource::<PreviewInput>()
         .init_resource::<CameraZoomState>()
         .init_resource::<RenderSettingsState>()
+        .init_resource::<MobileWebUiState>()
         .init_resource::<DevWindowsEnabled>()
         .insert_resource(SectionVisibilityState::from_sections(&config.sections))
         .init_resource::<SelectedMapDetails>()
@@ -238,6 +239,7 @@ fn build_app(config: ViewerConfig) -> App {
                 apply_camera_pan,
                 apply_preview_render_settings,
                 draw_preview_gizmos,
+                ensure_mobile_web_dock_layout,
                 ensure_render_settings_dock_layout,
                 handle_dev_menu_actions,
                 notify_web_loader_ready,

@@ -33,6 +33,7 @@ render-background-hint = Controls the preview viewport clear color.
 render-preview-grid = Show Preview Grid
 render-preview-grid-color = Preview Grid Color
 render-preview-grid-hint = Draws the tile grid for regular square maps.
+render-android-grid-warning = Grids may not render correctly on Android.
 render-world-grid = Show World Grid
 render-world-grid-color = World Grid Color
 render-world-grid-hint = Draws borders for each map piece inside a loaded world.
