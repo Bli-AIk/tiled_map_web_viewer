@@ -111,6 +111,23 @@ impl Default for ViewerConfig {
 
 /// Entry point — builds and runs the Bevy application with the given configuration.
 pub fn run(config: ViewerConfig) {
+    run_with_app_hook(config, |_| {});
+}
+
+/// Entry point with an additional app customization hook.
+///
+/// This lets downstream applications install optional debugging or tooling
+/// plugins without forking the viewer's core startup logic.
+pub fn run_with_app_hook<F>(config: ViewerConfig, app_hook: F)
+where
+    F: FnOnce(&mut App),
+{
+    let mut app = build_app(config);
+    app_hook(&mut app);
+    app.run();
+}
+
+fn build_app(config: ViewerConfig) -> App {
     let mut app = App::new();
     let asset_file_path = config
         .asset_root
@@ -363,7 +380,7 @@ pub fn run(config: ViewerConfig) {
         },
     );
 
-    app.run();
+    app
 }
 
 fn default_asset_file_path() -> String {
@@ -494,6 +511,9 @@ impl Default for ScrollSensitivity {
 #[derive(Component)]
 struct PreviewCamera;
 
+const PREVIEW_CAMERA_NEAR: f32 = -100_000.0;
+const PREVIEW_CAMERA_FAR: f32 = 100_000.0;
+
 #[derive(SystemParam)]
 struct LoadingContext<'w, 's> {
     commands: Commands<'w, 's>,
@@ -518,6 +538,11 @@ fn setup(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
     commands.spawn(Camera2d);
     commands.spawn((
         Camera2d,
+        Projection::Orthographic(OrthographicProjection {
+            near: PREVIEW_CAMERA_NEAR,
+            far: PREVIEW_CAMERA_FAR,
+            ..OrthographicProjection::default_2d()
+        }),
         Camera {
             order: -1,
             clear_color: ClearColorConfig::Custom(Color::srgb(0.1, 0.1, 0.15)),
@@ -755,6 +780,8 @@ fn apply_camera_zoom(
     let Projection::Orthographic(ref mut ortho) = *projection else {
         return;
     };
+    ortho.near = PREVIEW_CAMERA_NEAR;
+    ortho.far = PREVIEW_CAMERA_FAR;
 
     if input.scroll_delta.abs() > 0.001 {
         let zoom_factor = 1.0 - input.scroll_delta * sensitivity.zoom;
