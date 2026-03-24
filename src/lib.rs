@@ -442,14 +442,28 @@ struct MapPreviewState {
     height: u32,
 }
 
-#[derive(Resource, Default)]
+#[derive(Resource)]
 struct PreviewInput {
     scroll_delta: f32,
+    zoom_factor: f32,
     drag_delta: egui::Vec2,
     #[allow(dead_code)]
     hovered: bool,
     cursor_uv: Option<egui::Pos2>,
     image_screen_size: egui::Vec2,
+}
+
+impl Default for PreviewInput {
+    fn default() -> Self {
+        Self {
+            scroll_delta: 0.0,
+            zoom_factor: 1.0,
+            drag_delta: egui::Vec2::ZERO,
+            hovered: false,
+            cursor_uv: None,
+            image_screen_size: egui::Vec2::ZERO,
+        }
+    }
 }
 
 #[derive(Resource)]
@@ -784,8 +798,14 @@ fn apply_camera_zoom(
     ortho.near = PREVIEW_CAMERA_NEAR;
     ortho.far = PREVIEW_CAMERA_FAR;
 
+    let mut zoom_factor = 1.0;
     if input.scroll_delta.abs() > 0.001 {
-        let zoom_factor = 1.0 - input.scroll_delta * sensitivity.zoom;
+        zoom_factor *= 1.0 - input.scroll_delta * sensitivity.zoom;
+    }
+    if (input.zoom_factor - 1.0).abs() > 0.001 {
+        zoom_factor *= input.zoom_factor.max(0.01).recip();
+    }
+    if (zoom_factor - 1.0).abs() > 0.001 {
         zoom_state.target_scale = (zoom_state.target_scale * zoom_factor).clamp(0.2, 30.0);
     }
 
@@ -836,6 +856,7 @@ fn apply_camera_pan(
     }
 
     input.scroll_delta = 0.0;
+    input.zoom_factor = 1.0;
     input.drag_delta = egui::Vec2::ZERO;
 }
 
@@ -877,12 +898,14 @@ fn sync_preview_to_panel(
         panel.height = state.height;
 
         input.scroll_delta += panel.pending_scroll;
+        input.zoom_factor *= panel.pending_zoom_factor;
         input.drag_delta += panel.pending_drag;
         input.hovered = panel.is_hovered;
         input.cursor_uv = panel.cursor_uv;
         input.image_screen_size = panel.image_screen_size;
 
         panel.pending_scroll = 0.0;
+        panel.pending_zoom_factor = 1.0;
         panel.pending_drag = egui::Vec2::ZERO;
     }
 }

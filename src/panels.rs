@@ -7,7 +7,6 @@ use crate::{
     manifest::manifest_entry_from_path,
 };
 
-#[derive(Default)]
 pub(crate) struct MapPreviewPanel {
     pub(crate) translations: SharedTranslations,
     pub(crate) egui_texture_id: Option<egui::TextureId>,
@@ -16,11 +15,32 @@ pub(crate) struct MapPreviewPanel {
     pub(crate) is_loading: bool,
     pub(crate) loading_status: String,
     pub(crate) pending_scroll: f32,
+    pub(crate) pending_zoom_factor: f32,
     pub(crate) pending_drag: egui::Vec2,
     pub(crate) is_hovered: bool,
     pub(crate) cursor_uv: Option<egui::Pos2>,
     pub(crate) image_screen_size: egui::Vec2,
     pub(crate) panel_size: egui::Vec2,
+}
+
+impl Default for MapPreviewPanel {
+    fn default() -> Self {
+        Self {
+            translations: SharedTranslations::default(),
+            egui_texture_id: None,
+            width: 0,
+            height: 0,
+            is_loading: false,
+            loading_status: String::new(),
+            pending_scroll: 0.0,
+            pending_zoom_factor: 1.0,
+            pending_drag: egui::Vec2::ZERO,
+            is_hovered: false,
+            cursor_uv: None,
+            image_screen_size: egui::Vec2::ZERO,
+            panel_size: egui::Vec2::ZERO,
+        }
+    }
 }
 
 impl MapPreviewPanel {
@@ -64,6 +84,13 @@ impl WorkbenchPanel for MapPreviewPanel {
         let (response, painter) = ui.allocate_painter(display_size, egui::Sense::click_and_drag());
         let rect = response.rect;
 
+        let touch_gesture = ui.input(|i| i.multi_touch());
+        let any_touches = ui.input(|i| i.any_touches());
+        let touch_center = touch_gesture
+            .as_ref()
+            .map(|touch| touch.center_pos)
+            .filter(|pos| rect.contains(*pos));
+
         painter.image(
             tex_id,
             rect,
@@ -71,13 +98,15 @@ impl WorkbenchPanel for MapPreviewPanel {
             egui::Color32::WHITE,
         );
 
-        self.is_hovered = response.hovered();
-        if self.is_hovered {
-            if let Some(pos) = response.hover_pos() {
-                let uv_x = (pos.x - rect.left()) / rect.width();
-                let uv_y = (pos.y - rect.top()) / rect.height();
-                self.cursor_uv = Some(egui::pos2(uv_x, uv_y));
-            }
+        self.is_hovered = response.hovered() || response.dragged() || touch_center.is_some();
+        let pointer_pos = touch_center
+            .or(response.interact_pointer_pos())
+            .or(response.hover_pos())
+            .filter(|pos| rect.contains(*pos));
+        if let Some(pos) = pointer_pos {
+            let uv_x = (pos.x - rect.left()) / rect.width();
+            let uv_y = (pos.y - rect.top()) / rect.height();
+            self.cursor_uv = Some(egui::pos2(uv_x, uv_y));
         } else {
             self.cursor_uv = None;
         }
@@ -89,8 +118,12 @@ impl WorkbenchPanel for MapPreviewPanel {
             }
         }
 
-        if response.dragged_by(egui::PointerButton::Middle)
+        if let Some(touch) = touch_gesture.filter(|touch| rect.contains(touch.center_pos)) {
+            self.pending_zoom_factor *= touch.zoom_delta.max(0.01);
+            self.pending_drag += touch.translation_delta;
+        } else if response.dragged_by(egui::PointerButton::Middle)
             || response.dragged_by(egui::PointerButton::Secondary)
+            || (any_touches && response.dragged_by(egui::PointerButton::Primary))
         {
             self.pending_drag += response.drag_delta();
         }
