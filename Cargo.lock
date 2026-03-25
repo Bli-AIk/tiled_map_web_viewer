@@ -5665,7 +5665,7 @@ dependencies = [
 
 [[package]]
 name = "tiled_map_web_viewer"
-version = "0.5.1"
+version = "0.5.2"
 dependencies = [
  "bevy",
  "bevy_ecs_tiled",
