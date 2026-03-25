@@ -10,25 +10,29 @@ use bevy_workbench::i18n::{I18n, Locale};
 use bevy_workbench::prelude::*;
 
 use std::collections::HashMap;
-#[cfg(not(target_arch = "wasm32"))]
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::RwLock;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 mod cleanup;
+mod details_panel;
+mod download;
 mod manifest;
 mod panels;
+mod platform;
 mod render_settings;
 mod translations;
 mod world_view;
 
 use cleanup::{PendingCleanup, handle_map_load, process_pending_cleanup};
+use details_panel::MapDetailsPanel;
+use download::{AssetRootPath, DownloadUiState, PendingDownloadReceiver, poll_download_jobs};
 pub use manifest::{MapAssetKind, MapBadge, MapDetail, MapManifest, MapManifestEntry};
-use panels::{MapDetailsPanel, MapListPanel, MapPreviewPanel};
+use panels::{MapListPanel, MapPreviewPanel};
+use platform::{default_asset_file_path, initial_window_resolution, notify_web_loader_ready};
 use render_settings::{
-    RenderSettingsPanel, RenderSettingsState, apply_preview_render_settings, draw_preview_gizmos,
-    ensure_render_settings_dock_layout,
+    MobileWebUiState, RenderSettingsPanel, RenderSettingsState, apply_preview_render_settings,
+    draw_preview_gizmos, ensure_mobile_web_dock_layout, ensure_render_settings_dock_layout,
 };
 pub(crate) use translations::SharedTranslations;
 use translations::Translations;
@@ -133,6 +137,7 @@ fn build_app(config: ViewerConfig) -> App {
         .asset_root
         .clone()
         .unwrap_or_else(default_asset_file_path);
+    let initial_resolution = initial_window_resolution(config.resolution);
 
     let dev_toggle = Arc::new(AtomicBool::new(false));
     let section_toggles = Arc::new(RwLock::new(
@@ -149,14 +154,14 @@ fn build_app(config: ViewerConfig) -> App {
     app.add_plugins(
         DefaultPlugins
             .set(AssetPlugin {
-                file_path: asset_file_path,
+                file_path: asset_file_path.clone(),
                 meta_check: AssetMetaCheck::Never,
                 ..default()
             })
             .set(WindowPlugin {
                 primary_window: Some(Window {
                     title: config.title.clone(),
-                    resolution: (config.resolution.0, config.resolution.1).into(),
+                    resolution: initial_resolution.into(),
                     canvas: Some("#the_canvas_id".to_string()),
                     fit_canvas_to_parent: true,
                     prevent_default_event_handling: true,
@@ -218,8 +223,12 @@ fn build_app(config: ViewerConfig) -> App {
         .init_resource::<PendingCleanup>()
         .init_resource::<PreviewInput>()
         .init_resource::<CameraZoomState>()
+        .init_resource::<DownloadUiState>()
+        .init_resource::<PendingDownloadReceiver>()
         .init_resource::<RenderSettingsState>()
+        .init_resource::<MobileWebUiState>()
         .init_resource::<DevWindowsEnabled>()
+        .insert_resource(AssetRootPath(asset_file_path.clone()))
         .insert_resource(SectionVisibilityState::from_sections(&config.sections))
         .init_resource::<SelectedMapDetails>()
         .init_resource::<ScrollSensitivity>()
@@ -232,14 +241,14 @@ fn build_app(config: ViewerConfig) -> App {
         .add_systems(
             Update,
             (
-                sync_preview_to_panel,
-                apply_camera_zoom,
-                apply_camera_pan,
+                (sync_preview_to_panel, apply_camera_zoom, apply_camera_pan).chain(),
                 apply_preview_render_settings,
                 draw_preview_gizmos,
+                ensure_mobile_web_dock_layout,
                 ensure_render_settings_dock_layout,
                 handle_dev_menu_actions,
                 notify_web_loader_ready,
+                poll_download_jobs,
             ),
         )
         .add_systems(
@@ -383,27 +392,6 @@ fn build_app(config: ViewerConfig) -> App {
     app
 }
 
-fn default_asset_file_path() -> String {
-    #[cfg(target_arch = "wasm32")]
-    {
-        "assets".into()
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        if let Ok(root) = std::env::var("BEVY_ASSET_ROOT") {
-            return root;
-        }
-
-        let manifest_assets = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets");
-        if manifest_assets.exists() {
-            return manifest_assets.to_string_lossy().into_owned();
-        }
-
-        "assets".into()
-    }
-}
-
 // --- Internal types ---
 
 #[derive(Resource, Default)]
@@ -441,14 +429,28 @@ struct MapPreviewState {
     height: u32,
 }
 
-#[derive(Resource, Default)]
+#[derive(Resource)]
 struct PreviewInput {
     scroll_delta: f32,
+    zoom_factor: f32,
     drag_delta: egui::Vec2,
     #[allow(dead_code)]
     hovered: bool,
     cursor_uv: Option<egui::Pos2>,
     image_screen_size: egui::Vec2,
+}
+
+impl Default for PreviewInput {
+    fn default() -> Self {
+        Self {
+            scroll_delta: 0.0,
+            zoom_factor: 1.0,
+            drag_delta: egui::Vec2::ZERO,
+            hovered: false,
+            cursor_uv: None,
+            image_screen_size: egui::Vec2::ZERO,
+        }
+    }
 }
 
 #[derive(Resource)]
@@ -783,8 +785,14 @@ fn apply_camera_zoom(
     ortho.near = PREVIEW_CAMERA_NEAR;
     ortho.far = PREVIEW_CAMERA_FAR;
 
+    let mut zoom_factor = 1.0;
     if input.scroll_delta.abs() > 0.001 {
-        let zoom_factor = 1.0 - input.scroll_delta * sensitivity.zoom;
+        zoom_factor *= 1.0 - input.scroll_delta * sensitivity.zoom;
+    }
+    if (input.zoom_factor - 1.0).abs() > 0.001 {
+        zoom_factor *= input.zoom_factor.max(0.01).recip();
+    }
+    if (zoom_factor - 1.0).abs() > 0.001 {
         zoom_state.target_scale = (zoom_state.target_scale * zoom_factor).clamp(0.2, 30.0);
     }
 
@@ -835,6 +843,7 @@ fn apply_camera_pan(
     }
 
     input.scroll_delta = 0.0;
+    input.zoom_factor = 1.0;
     input.drag_delta = egui::Vec2::ZERO;
 }
 
@@ -876,34 +885,14 @@ fn sync_preview_to_panel(
         panel.height = state.height;
 
         input.scroll_delta += panel.pending_scroll;
+        input.zoom_factor *= panel.pending_zoom_factor;
         input.drag_delta += panel.pending_drag;
         input.hovered = panel.is_hovered;
         input.cursor_uv = panel.cursor_uv;
         input.image_screen_size = panel.image_screen_size;
 
         panel.pending_scroll = 0.0;
+        panel.pending_zoom_factor = 1.0;
         panel.pending_drag = egui::Vec2::ZERO;
     }
 }
-
-#[cfg(target_arch = "wasm32")]
-fn notify_web_loader_ready(mut notified: Local<bool>) {
-    if *notified {
-        return;
-    }
-
-    let Some(window) = web_sys::window() else {
-        return;
-    };
-
-    let Ok(event) = web_sys::Event::new("bevy-app-ready") else {
-        return;
-    };
-
-    if window.dispatch_event(&event).is_ok() {
-        *notified = true;
-    }
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn notify_web_loader_ready() {}
