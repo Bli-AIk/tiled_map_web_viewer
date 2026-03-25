@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.2](https://github.com/Bli-AIk/tiled_map_web_viewer/compare/v0.5.1...v0.5.2) - 2026-03-25
+
+### Added
+
+- *(ui)* add search and bundle download ([#21](https://github.com/Bli-AIk/tiled_map_web_viewer/pull/21))
+
 ## [0.5.1](https://github.com/Bli-AIk/tiled_map_web_viewer/compare/v0.5.0...v0.5.1) - 2026-03-24
 
 ### Fixed
