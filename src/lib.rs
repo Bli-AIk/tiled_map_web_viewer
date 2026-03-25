@@ -10,8 +10,6 @@ use bevy_workbench::i18n::{I18n, Locale};
 use bevy_workbench::prelude::*;
 
 use std::collections::HashMap;
-#[cfg(not(target_arch = "wasm32"))]
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::RwLock;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
@@ -19,6 +17,7 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 mod cleanup;
 mod manifest;
 mod panels;
+mod platform;
 mod render_settings;
 mod translations;
 mod world_view;
@@ -26,6 +25,7 @@ mod world_view;
 use cleanup::{PendingCleanup, handle_map_load, process_pending_cleanup};
 pub use manifest::{MapAssetKind, MapBadge, MapDetail, MapManifest, MapManifestEntry};
 use panels::{MapDetailsPanel, MapListPanel, MapPreviewPanel};
+use platform::{default_asset_file_path, initial_window_resolution, notify_web_loader_ready};
 use render_settings::{
     MobileWebUiState, RenderSettingsPanel, RenderSettingsState, apply_preview_render_settings,
     draw_preview_gizmos, ensure_mobile_web_dock_layout, ensure_render_settings_dock_layout,
@@ -234,9 +234,7 @@ fn build_app(config: ViewerConfig) -> App {
         .add_systems(
             Update,
             (
-                sync_preview_to_panel,
-                apply_camera_zoom,
-                apply_camera_pan,
+                (sync_preview_to_panel, apply_camera_zoom, apply_camera_pan).chain(),
                 apply_preview_render_settings,
                 draw_preview_gizmos,
                 ensure_mobile_web_dock_layout,
@@ -384,27 +382,6 @@ fn build_app(config: ViewerConfig) -> App {
     );
 
     app
-}
-
-fn default_asset_file_path() -> String {
-    #[cfg(target_arch = "wasm32")]
-    {
-        "assets".into()
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        if let Ok(root) = std::env::var("BEVY_ASSET_ROOT") {
-            return root;
-        }
-
-        let manifest_assets = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets");
-        if manifest_assets.exists() {
-            return manifest_assets.to_string_lossy().into_owned();
-        }
-
-        "assets".into()
-    }
 }
 
 // --- Internal types ---
@@ -910,54 +887,4 @@ fn sync_preview_to_panel(
         panel.pending_zoom_factor = 1.0;
         panel.pending_drag = egui::Vec2::ZERO;
     }
-}
-
-#[cfg(target_arch = "wasm32")]
-fn notify_web_loader_ready(mut notified: Local<bool>) {
-    if *notified {
-        return;
-    }
-
-    let Some(window) = web_sys::window() else {
-        return;
-    };
-
-    let Ok(event) = web_sys::Event::new("bevy-app-ready") else {
-        return;
-    };
-
-    if window.dispatch_event(&event).is_ok() {
-        *notified = true;
-    }
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn notify_web_loader_ready() {}
-
-#[cfg(target_arch = "wasm32")]
-fn initial_window_resolution(requested: (u32, u32)) -> (u32, u32) {
-    let Some(window) = web_sys::window() else {
-        return requested;
-    };
-
-    let viewport_width = window
-        .inner_width()
-        .ok()
-        .and_then(|value| value.as_f64())
-        .map(|value| value.max(1.0).floor() as u32);
-    let viewport_height = window
-        .inner_height()
-        .ok()
-        .and_then(|value| value.as_f64())
-        .map(|value| value.max(1.0).floor() as u32);
-
-    match (viewport_width, viewport_height) {
-        (Some(width), Some(height)) => (requested.0.min(width), requested.1.min(height)),
-        _ => requested,
-    }
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn initial_window_resolution(requested: (u32, u32)) -> (u32, u32) {
-    requested
 }

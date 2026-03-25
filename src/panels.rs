@@ -84,12 +84,11 @@ impl WorkbenchPanel for MapPreviewPanel {
         let (response, painter) = ui.allocate_painter(display_size, egui::Sense::click_and_drag());
         let rect = response.rect;
 
-        let touch_gesture = ui.input(|i| i.multi_touch());
-        let any_touches = ui.input(|i| i.any_touches());
-        let touch_center = touch_gesture
-            .as_ref()
-            .map(|touch| touch.center_pos)
-            .filter(|pos| rect.contains(*pos));
+        let touch_info = ui.input(|i| i.multi_touch());
+        let gesture_zoom = ui.input(|i| i.zoom_delta());
+        let raw_scroll = ui.input(|i| i.raw_scroll_delta.y);
+        let touch_center = touch_info.map(|touch| touch.center_pos);
+        let touch_center = touch_center.filter(|pos| rect.contains(*pos));
 
         painter.image(
             tex_id,
@@ -98,10 +97,11 @@ impl WorkbenchPanel for MapPreviewPanel {
             egui::Color32::WHITE,
         );
 
-        self.is_hovered = response.hovered() || response.dragged() || touch_center.is_some();
+        self.is_hovered =
+            response.contains_pointer() || response.dragged() || touch_center.is_some();
         let pointer_pos = touch_center
+            .or(ui.ctx().pointer_latest_pos())
             .or(response.interact_pointer_pos())
-            .or(response.hover_pos())
             .filter(|pos| rect.contains(*pos));
         if let Some(pos) = pointer_pos {
             let uv_x = (pos.x - rect.left()) / rect.width();
@@ -111,19 +111,17 @@ impl WorkbenchPanel for MapPreviewPanel {
             self.cursor_uv = None;
         }
 
-        if self.is_hovered {
-            let scroll = ui.input(|i| i.raw_scroll_delta.y);
-            if scroll.abs() > 0.1 {
-                self.pending_scroll += scroll;
-            }
+        if self.is_hovered && raw_scroll.abs() > 0.1 {
+            self.pending_scroll += raw_scroll;
         }
 
-        if let Some(touch) = touch_gesture.filter(|touch| rect.contains(touch.center_pos)) {
-            self.pending_zoom_factor *= touch.zoom_delta.max(0.01);
-            self.pending_drag += touch.translation_delta;
-        } else if response.dragged_by(egui::PointerButton::Middle)
+        if self.is_hovered && (gesture_zoom - 1.0).abs() > 0.001 {
+            self.pending_zoom_factor *= gesture_zoom.max(0.01);
+        }
+
+        if response.dragged_by(egui::PointerButton::Primary)
+            || response.dragged_by(egui::PointerButton::Middle)
             || response.dragged_by(egui::PointerButton::Secondary)
-            || (any_touches && response.dragged_by(egui::PointerButton::Primary))
         {
             self.pending_drag += response.drag_delta();
         }
