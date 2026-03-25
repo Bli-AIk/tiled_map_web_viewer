@@ -4,6 +4,7 @@ use bevy_workbench::dock::WorkbenchPanel;
 use crate::{
     MapCategory, MapListView, MapLoadRequest, MapManifest, MapManifestEntry, MapSection,
     SectionVisibilityState, SelectedMapDetails, SharedTranslations,
+    details_panel::{badge_color, render_badge},
     manifest::manifest_entry_from_path,
 };
 
@@ -167,91 +168,6 @@ impl WorkbenchPanel for MapPreviewPanel {
 }
 
 #[derive(Default)]
-pub(crate) struct MapDetailsPanel {
-    pub(crate) translations: SharedTranslations,
-}
-
-impl MapDetailsPanel {
-    pub(crate) fn new(translations: SharedTranslations) -> Self {
-        Self { translations }
-    }
-}
-
-impl WorkbenchPanel for MapDetailsPanel {
-    fn id(&self) -> &str {
-        "map_details_inspector"
-    }
-
-    fn title(&self) -> String {
-        self.translations
-            .read()
-            .map(|t| t.map_details.clone())
-            .unwrap_or_else(|_| "Map Details".into())
-    }
-
-    fn ui(&mut self, _ui: &mut egui::Ui) {}
-
-    fn ui_world(&mut self, ui: &mut egui::Ui, world: &mut World) {
-        let maybe_selected = world.resource::<SelectedMapDetails>().0.clone();
-        let Ok(t) = self.translations.read() else {
-            ui.label("Translations unavailable");
-            return;
-        };
-        egui::ScrollArea::vertical()
-            .auto_shrink([false, false])
-            .show(ui, |ui| {
-                let Some(selected) = maybe_selected else {
-                    ui.label(&t.details_no_selection);
-                    return;
-                };
-
-                ui.heading(selected.display_title());
-                ui.separator();
-                details_row(ui, &t.details_path, &selected.path);
-                details_row(ui, &t.details_kind, selected.asset_kind().label());
-                if let Some(section) = &selected.section {
-                    details_row(ui, &t.details_section, section);
-                }
-                if let Some(category) = &selected.category {
-                    details_row(ui, &t.details_category, category);
-                }
-
-                if !selected.badges.is_empty() {
-                    ui.separator();
-                    ui.label(egui::RichText::new(&t.details_badges).strong());
-                    ui.horizontal_wrapped(|ui| {
-                        for badge in &selected.badges {
-                            render_badge(ui, &badge.label, badge_color(badge.tone.as_deref()));
-                        }
-                    });
-                }
-
-                if !selected.details.is_empty() {
-                    ui.separator();
-                    for detail in &selected.details {
-                        details_row(ui, &detail.label, &detail.value);
-                    }
-                }
-            });
-    }
-
-    fn needs_world(&self) -> bool {
-        true
-    }
-
-    fn default_visible(&self) -> bool {
-        true
-    }
-}
-
-fn details_row(ui: &mut egui::Ui, label: &str, value: &str) {
-    ui.horizontal_wrapped(|ui| {
-        ui.label(egui::RichText::new(label).strong());
-        ui.label(value);
-    });
-}
-
-#[derive(Default)]
 pub(crate) struct MapListPanel {
     pub(crate) translations: SharedTranslations,
     pub(crate) sections: Vec<MapSection>,
@@ -261,6 +177,7 @@ pub(crate) struct MapListPanel {
     maps: Vec<MapManifestEntry>,
     scanned: bool,
     selected: Option<String>,
+    search_query: String,
 }
 
 impl MapListPanel {
@@ -394,9 +311,19 @@ impl WorkbenchPanel for MapListPanel {
         let list_other_group = t.list_other_group.clone();
         let list_maps_group = t.list_maps_group.clone();
         let list_worlds_group = t.list_worlds_group.clone();
+        let list_search_label = t.list_search_label.clone();
+        let list_search_hint = t.list_search_hint.clone();
         drop(t);
 
         ui.heading(self.title());
+        ui.horizontal(|ui| {
+            ui.label(&list_search_label);
+            ui.add(
+                egui::TextEdit::singleline(&mut self.search_query)
+                    .hint_text(&list_search_hint)
+                    .desired_width(f32::INFINITY),
+            );
+        });
         ui.separator();
 
         if !self.scanned {
@@ -418,6 +345,7 @@ impl WorkbenchPanel for MapListPanel {
                     .maps
                     .iter()
                     .filter(|entry| entry.section.as_deref() == Some(section_filter))
+                    .filter(|entry| map_entry_matches_search(entry, &self.search_query))
                     .collect();
                 if entries.is_empty() {
                     ui.label(&list_no_maps);
@@ -440,7 +368,10 @@ impl WorkbenchPanel for MapListPanel {
                     ui,
                     grouped_maps_for_categories(
                         &self.categories,
-                        self.maps.iter().collect(),
+                        self.maps
+                            .iter()
+                            .filter(|entry| map_entry_matches_search(entry, &self.search_query))
+                            .collect(),
                         &list_other_group,
                         &list_maps_group,
                         &list_worlds_group,
@@ -457,6 +388,7 @@ impl WorkbenchPanel for MapListPanel {
                         .maps
                         .iter()
                         .filter(|entry| entry.section.as_deref() == Some(section.key.as_str()))
+                        .filter(|entry| map_entry_matches_search(entry, &self.search_query))
                         .collect();
                     if entries.is_empty() {
                         continue;
@@ -482,6 +414,7 @@ impl WorkbenchPanel for MapListPanel {
                     .maps
                     .iter()
                     .filter(|entry| entry.section.is_none())
+                    .filter(|entry| map_entry_matches_search(entry, &self.search_query))
                     .collect();
                 if !uncategorized_sections.is_empty() {
                     ui.heading(format!(
@@ -521,6 +454,25 @@ impl WorkbenchPanel for MapListPanel {
     }
 }
 
+fn map_entry_matches_search(entry: &MapManifestEntry, query: &str) -> bool {
+    let query = query.trim();
+    if query.is_empty() {
+        return true;
+    }
+
+    let query = query.to_ascii_lowercase();
+    entry.display_title().to_ascii_lowercase().contains(&query)
+        || entry.path.to_ascii_lowercase().contains(&query)
+        || entry
+            .category
+            .as_deref()
+            .is_some_and(|category| category.to_ascii_lowercase().contains(&query))
+        || entry
+            .section
+            .as_deref()
+            .is_some_and(|section| section.to_ascii_lowercase().contains(&query))
+}
+
 fn render_category_groups(
     ui: &mut egui::Ui,
     groups: Vec<(String, Vec<&MapManifestEntry>)>,
@@ -558,27 +510,6 @@ fn render_map_entry(
             render_badge(ui, &badge.label, badge_color(badge.tone.as_deref()));
         }
     });
-}
-
-fn render_badge(ui: &mut egui::Ui, label: &str, color: egui::Color32) {
-    ui.label(
-        egui::RichText::new(format!(" {label} "))
-            .background_color(color.gamma_multiply(0.2))
-            .color(color)
-            .strong(),
-    );
-}
-
-fn badge_color(tone: Option<&str>) -> egui::Color32 {
-    match tone {
-        Some("success") => egui::Color32::from_rgb(80, 190, 120),
-        Some("info") => egui::Color32::from_rgb(80, 170, 220),
-        Some("warning") => egui::Color32::from_rgb(235, 180, 70),
-        Some("danger") => egui::Color32::from_rgb(230, 100, 100),
-        Some("muted") => egui::Color32::from_rgb(150, 150, 150),
-        Some("accent") => egui::Color32::from_rgb(180, 120, 230),
-        _ => egui::Color32::LIGHT_GRAY,
-    }
 }
 
 fn grouped_maps_for_categories<'a>(
@@ -660,5 +591,47 @@ fn walk_dir_collect(
         {
             maps.push(manifest_entry_from_path(rel.to_string_lossy().as_ref()));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::map_entry_matches_search;
+    use crate::MapManifestEntry;
+
+    #[test]
+    fn empty_query_matches_every_entry() {
+        let entry = MapManifestEntry {
+            title: "room_tundra8".into(),
+            path: "curated/undertale/room_tundra8.tmx".into(),
+            ..Default::default()
+        };
+        assert!(map_entry_matches_search(&entry, ""));
+        assert!(map_entry_matches_search(&entry, "   "));
+    }
+
+    #[test]
+    fn search_matches_title_and_path_case_insensitively() {
+        let entry = MapManifestEntry {
+            title: "Dark Sanctuary".into(),
+            path: "curated/worlds/deltarune/deltarune_ch4/dark_sanctuary.world".into(),
+            ..Default::default()
+        };
+        assert!(map_entry_matches_search(&entry, "sanctuary"));
+        assert!(map_entry_matches_search(&entry, "CURATED/WORLDS"));
+        assert!(!map_entry_matches_search(&entry, "waterfall"));
+    }
+
+    #[test]
+    fn search_matches_section_and_category() {
+        let entry = MapManifestEntry {
+            title: "room_torhouse".into(),
+            path: "curated/undertale/room_torhouse.tmx".into(),
+            section: Some("curated".into()),
+            category: Some("worlds".into()),
+            ..Default::default()
+        };
+        assert!(map_entry_matches_search(&entry, "curated"));
+        assert!(map_entry_matches_search(&entry, "worlds"));
     }
 }

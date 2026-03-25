@@ -15,6 +15,8 @@ use std::sync::RwLock;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 mod cleanup;
+mod details_panel;
+mod download;
 mod manifest;
 mod panels;
 mod platform;
@@ -23,8 +25,10 @@ mod translations;
 mod world_view;
 
 use cleanup::{PendingCleanup, handle_map_load, process_pending_cleanup};
+use details_panel::MapDetailsPanel;
+use download::{AssetRootPath, DownloadUiState};
 pub use manifest::{MapAssetKind, MapBadge, MapDetail, MapManifest, MapManifestEntry};
-use panels::{MapDetailsPanel, MapListPanel, MapPreviewPanel};
+use panels::{MapListPanel, MapPreviewPanel};
 use platform::{default_asset_file_path, initial_window_resolution, notify_web_loader_ready};
 use render_settings::{
     MobileWebUiState, RenderSettingsPanel, RenderSettingsState, apply_preview_render_settings,
@@ -150,7 +154,7 @@ fn build_app(config: ViewerConfig) -> App {
     app.add_plugins(
         DefaultPlugins
             .set(AssetPlugin {
-                file_path: asset_file_path,
+                file_path: asset_file_path.clone(),
                 meta_check: AssetMetaCheck::Never,
                 ..default()
             })
@@ -219,9 +223,11 @@ fn build_app(config: ViewerConfig) -> App {
         .init_resource::<PendingCleanup>()
         .init_resource::<PreviewInput>()
         .init_resource::<CameraZoomState>()
+        .init_resource::<DownloadUiState>()
         .init_resource::<RenderSettingsState>()
         .init_resource::<MobileWebUiState>()
         .init_resource::<DevWindowsEnabled>()
+        .insert_resource(AssetRootPath(asset_file_path.clone()))
         .insert_resource(SectionVisibilityState::from_sections(&config.sections))
         .init_resource::<SelectedMapDetails>()
         .init_resource::<ScrollSensitivity>()
