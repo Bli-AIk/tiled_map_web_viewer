@@ -323,7 +323,7 @@ impl WorkbenchPanel for MapListPanel {
             ui.add(
                 egui::TextEdit::singleline(&mut self.search_query)
                     .hint_text(&list_search_hint)
-                    .desired_width(f32::INFINITY),
+                    .desired_width(220.0),
             );
             ui.add_space(6.0);
         });
