@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::io::{Cursor, Write};
+use std::sync::Mutex;
 
 use bevy::prelude::Resource;
 use quick_xml::Reader;
@@ -23,7 +24,13 @@ pub(crate) struct DownloadStatus {
 #[derive(Resource, Clone, Debug, Default)]
 pub(crate) struct DownloadUiState {
     pub(crate) last_status: Option<DownloadStatus>,
+    pub(crate) is_busy: bool,
 }
+
+#[derive(Resource, Default)]
+pub(crate) struct PendingDownloadReceiver(
+    pub(crate) Mutex<Option<std::sync::mpsc::Receiver<DownloadStatus>>>,
+);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct DownloadBundle {
@@ -48,10 +55,12 @@ impl fmt::Display for DownloadError {
 
 impl std::error::Error for DownloadError {}
 
+#[cfg(any(test, not(target_arch = "wasm32")))]
 trait BundleSource {
     fn read_bytes(&self, relative_path: &str) -> Result<Vec<u8>, DownloadError>;
 }
 
+#[cfg(any(test, not(target_arch = "wasm32")))]
 fn build_download_bundle(
     source: &impl BundleSource,
     entry: &MapManifestEntry,
@@ -87,52 +96,122 @@ fn bundle_to_zip_bytes(bundle: &DownloadBundle) -> Result<Vec<u8>, DownloadError
         .map_err(|err| DownloadError::new(format!("failed to finalize zip archive: {err}")))
 }
 
-pub(crate) fn trigger_download(
-    asset_root: &str,
-    entry: &MapManifestEntry,
-) -> Result<String, DownloadError> {
+pub(crate) fn request_download(
+    asset_root: String,
+    entry: MapManifestEntry,
+    ui_state: &mut DownloadUiState,
+    pending: &PendingDownloadReceiver,
+) {
+    let mut slot = pending.0.lock().expect("download receiver mutex poisoned");
+    if slot.is_some() {
+        return;
+    }
+
+    let (sender, receiver) = std::sync::mpsc::channel::<DownloadStatus>();
+    *slot = Some(receiver);
+    drop(slot);
+
+    ui_state.is_busy = true;
+    ui_state.last_status = Some(DownloadStatus {
+        message: "Preparing bundle...".into(),
+        is_error: false,
+    });
+
     #[cfg(target_arch = "wasm32")]
     {
-        let source = WebAssetSource::new(asset_root);
-        let bundle = build_download_bundle(&source, entry)?;
-        let zip_bytes = bundle_to_zip_bytes(&bundle)?;
-        download_zip_bytes_web(&bundle.archive_name, &zip_bytes)?;
-        return Ok(format!(
-            "Downloaded '{}' ({} files)",
-            bundle.archive_name,
-            bundle.files.len()
-        ));
+        wasm_bindgen_futures::spawn_local(async move {
+            let status = match trigger_download_web(&asset_root, &entry).await {
+                Ok(message) => DownloadStatus {
+                    message,
+                    is_error: false,
+                },
+                Err(err) => DownloadStatus {
+                    message: err.to_string(),
+                    is_error: true,
+                },
+            };
+            let _ = sender.send(status);
+        });
     }
 
     #[cfg(not(target_arch = "wasm32"))]
     {
-        let source = NativeAssetSource::new(asset_root);
-        let bundle = build_download_bundle(&source, entry)?;
-        let zip_bytes = bundle_to_zip_bytes(&bundle)?;
-        let output_dir = std::env::current_dir()
-            .map_err(|err| {
-                DownloadError::new(format!("failed to resolve current directory: {err}"))
-            })?
-            .join("downloads");
-        std::fs::create_dir_all(&output_dir).map_err(|err| {
-            DownloadError::new(format!(
-                "failed to create '{}': {err}",
-                output_dir.display()
-            ))
-        })?;
-        let output_path = output_dir.join(&bundle.archive_name);
-        std::fs::write(&output_path, zip_bytes).map_err(|err| {
-            DownloadError::new(format!(
-                "failed to write '{}': {err}",
-                output_path.display()
-            ))
-        })?;
-        Ok(format!(
-            "Saved '{}' ({} files)",
-            output_path.display(),
-            bundle.files.len()
-        ))
+        std::thread::spawn(move || {
+            let status = match trigger_download_native(&asset_root, &entry) {
+                Ok(message) => DownloadStatus {
+                    message,
+                    is_error: false,
+                },
+                Err(err) => DownloadStatus {
+                    message: err.to_string(),
+                    is_error: true,
+                },
+            };
+            let _ = sender.send(status);
+        });
     }
+}
+
+pub(crate) fn poll_download_jobs(
+    mut ui_state: bevy::prelude::ResMut<DownloadUiState>,
+    pending: bevy::prelude::Res<PendingDownloadReceiver>,
+) {
+    let maybe_status = {
+        let mut slot = pending.0.lock().expect("download receiver mutex poisoned");
+        let Some(receiver) = slot.as_ref() else {
+            return;
+        };
+        match receiver.try_recv() {
+            Ok(status) => {
+                *slot = None;
+                Some(status)
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => None,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                *slot = None;
+                Some(DownloadStatus {
+                    message: "Download worker disconnected".into(),
+                    is_error: true,
+                })
+            }
+        }
+    };
+
+    if let Some(status) = maybe_status {
+        ui_state.is_busy = false;
+        ui_state.last_status = Some(status);
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn trigger_download_native(
+    asset_root: &str,
+    entry: &MapManifestEntry,
+) -> Result<String, DownloadError> {
+    let source = NativeAssetSource::new(asset_root);
+    let bundle = build_download_bundle(&source, entry)?;
+    let zip_bytes = bundle_to_zip_bytes(&bundle)?;
+    let output_dir = std::env::current_dir()
+        .map_err(|err| DownloadError::new(format!("failed to resolve current directory: {err}")))?
+        .join("downloads");
+    std::fs::create_dir_all(&output_dir).map_err(|err| {
+        DownloadError::new(format!(
+            "failed to create '{}': {err}",
+            output_dir.display()
+        ))
+    })?;
+    let output_path = output_dir.join(&bundle.archive_name);
+    std::fs::write(&output_path, zip_bytes).map_err(|err| {
+        DownloadError::new(format!(
+            "failed to write '{}': {err}",
+            output_path.display()
+        ))
+    })?;
+    Ok(format!(
+        "Saved '{}' ({} files)",
+        output_path.display(),
+        bundle.files.len()
+    ))
 }
 
 fn bundle_archive_name(entry: &MapManifestEntry) -> String {
@@ -160,6 +239,7 @@ fn bundle_archive_name(entry: &MapManifestEntry) -> String {
     format!("{stem}.zip")
 }
 
+#[cfg(any(test, not(target_arch = "wasm32")))]
 fn collect_bundle_file(
     source: &impl BundleSource,
     relative_path: &str,
@@ -346,51 +426,93 @@ impl BundleSource for NativeAssetSource {
 }
 
 #[cfg(target_arch = "wasm32")]
-struct WebAssetSource {
-    asset_root: String,
+async fn trigger_download_web(
+    asset_root: &str,
+    entry: &MapManifestEntry,
+) -> Result<String, DownloadError> {
+    let bundle = build_download_bundle_web(asset_root, entry).await?;
+    let zip_bytes = bundle_to_zip_bytes(&bundle)?;
+    download_zip_bytes_web(&bundle.archive_name, &zip_bytes)?;
+    Ok(format!(
+        "Downloaded '{}' ({} files)",
+        bundle.archive_name,
+        bundle.files.len()
+    ))
 }
 
 #[cfg(target_arch = "wasm32")]
-impl WebAssetSource {
-    fn new(asset_root: &str) -> Self {
-        Self {
-            asset_root: asset_root.trim_end_matches('/').to_string(),
+async fn build_download_bundle_web(
+    asset_root: &str,
+    entry: &MapManifestEntry,
+) -> Result<DownloadBundle, DownloadError> {
+    let root_path = normalize_relative_path(&entry.path)?;
+    let asset_root = asset_root.trim_end_matches('/').to_string();
+    let mut pending = vec![root_path];
+    let mut files = BTreeMap::new();
+    let mut visited = BTreeSet::new();
+
+    while let Some(relative_path) = pending.pop() {
+        let relative_path = normalize_relative_path(&relative_path)?;
+        if !visited.insert(relative_path.clone()) {
+            continue;
+        }
+
+        let bytes = fetch_bytes_web(&asset_root, &relative_path).await?;
+        let mut references = Vec::new();
+        match extension_of(&relative_path).as_deref() {
+            Some("world") => {
+                let text = decode_text_file(&relative_path, &bytes)?;
+                for child in world_references(&text)? {
+                    references.push(resolve_reference_path(&relative_path, &child)?);
+                }
+            }
+            Some("tmx") | Some("tsx") => {
+                let text = decode_text_file(&relative_path, &bytes)?;
+                for child in xml_references(&text)? {
+                    references.push(resolve_reference_path(&relative_path, &child)?);
+                }
+            }
+            _ => {}
+        }
+        files.insert(relative_path, bytes);
+        for reference in references.into_iter().rev() {
+            pending.push(reference);
         }
     }
+
+    Ok(DownloadBundle {
+        archive_name: bundle_archive_name(entry),
+        files,
+    })
 }
 
 #[cfg(target_arch = "wasm32")]
-impl BundleSource for WebAssetSource {
-    fn read_bytes(&self, relative_path: &str) -> Result<Vec<u8>, DownloadError> {
-        let xhr = web_sys::XmlHttpRequest::new()
-            .map_err(|err| DownloadError::new(format!("failed to create XHR: {err:?}")))?;
-        let url = format!("{}/{}", self.asset_root, relative_path);
-        xhr.open_with_async("GET", &url, false).map_err(|err| {
-            DownloadError::new(format!("failed to open XHR for '{url}': {err:?}"))
-        })?;
-        xhr.set_response_type(web_sys::XmlHttpRequestResponseType::Arraybuffer);
-        xhr.send()
-            .map_err(|err| DownloadError::new(format!("failed to fetch '{url}': {err:?}")))?;
+async fn fetch_bytes_web(asset_root: &str, relative_path: &str) -> Result<Vec<u8>, DownloadError> {
+    use wasm_bindgen::JsCast;
 
-        let status = xhr.status().map_err(|err| {
-            DownloadError::new(format!("failed to read HTTP status for '{url}': {err:?}"))
-        })?;
-        if !(200..300).contains(&status) {
-            return Err(DownloadError::new(format!(
-                "failed to fetch '{url}': HTTP {status}"
-            )));
-        }
-
-        let response = xhr.response().map_err(|err| {
-            DownloadError::new(format!("failed to read XHR response for '{url}': {err:?}"))
-        })?;
-        if response.is_null() || response.is_undefined() {
-            return Err(DownloadError::new(format!(
-                "empty XHR response for '{url}'"
-            )));
-        }
-        Ok(js_sys::Uint8Array::new(&response).to_vec())
+    let window = web_sys::window().ok_or_else(|| DownloadError::new("window is unavailable"))?;
+    let url = format!("{asset_root}/{relative_path}");
+    let response_value = wasm_bindgen_futures::JsFuture::from(window.fetch_with_str(&url))
+        .await
+        .map_err(|err| DownloadError::new(format!("failed to fetch '{url}': {err:?}")))?;
+    let response = response_value
+        .dyn_into::<web_sys::Response>()
+        .map_err(|_| DownloadError::new(format!("failed to decode response for '{url}'")))?;
+    if !response.ok() {
+        return Err(DownloadError::new(format!(
+            "failed to fetch '{url}': HTTP {}",
+            response.status()
+        )));
     }
+    let buffer_promise = response.array_buffer().map_err(|err| {
+        DownloadError::new(format!("failed to read '{url}' as ArrayBuffer: {err:?}"))
+    })?;
+    let buffer = wasm_bindgen_futures::JsFuture::from(buffer_promise)
+        .await
+        .map_err(|err| {
+            DownloadError::new(format!("failed to resolve '{url}' ArrayBuffer: {err:?}"))
+        })?;
+    Ok(js_sys::Uint8Array::new(&buffer).to_vec())
 }
 
 #[cfg(target_arch = "wasm32")]

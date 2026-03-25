@@ -37,7 +37,8 @@ codegen-units = 1
 getrandom = { version = "0.2", features = ["js"] }
 js-sys = "0.3.91"
 wasm-bindgen = "0.2.114"
-web-sys = { version = "0.3", features = ["Blob", "Document", "Element", "Event", "EventTarget", "HtmlAnchorElement", "HtmlElement", "Node", "Url", "Window", "XmlHttpRequest", "XmlHttpRequestResponseType"] }
+wasm-bindgen-futures = "0.4.64"
+web-sys = { version = "0.3", features = ["Blob", "Document", "Element", "Event", "EventTarget", "HtmlAnchorElement", "HtmlElement", "Node", "Response", "Url", "Window", "XmlHttpRequest", "XmlHttpRequestResponseType"] }
 
 [patch.crates-io]
 bevy_ecs_tiled = { path = "patches/bevy_ecs_tiled" }

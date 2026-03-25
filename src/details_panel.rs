@@ -3,7 +3,7 @@ use bevy_workbench::dock::WorkbenchPanel;
 
 use crate::{
     SelectedMapDetails, SharedTranslations,
-    download::{AssetRootPath, DownloadStatus, DownloadUiState, trigger_download},
+    download::{AssetRootPath, DownloadUiState, PendingDownloadReceiver, request_download},
 };
 
 #[derive(Default)]
@@ -40,6 +40,7 @@ impl WorkbenchPanel for MapDetailsPanel {
         let details_no_selection = t.details_no_selection.clone();
         let details_download = t.details_download.clone();
         let details_download_hint = t.details_download_hint.clone();
+        let details_download_busy = t.details_download_busy.clone();
         let details_path = t.details_path.clone();
         let details_kind = t.details_kind.clone();
         let details_section = t.details_section.clone();
@@ -52,29 +53,26 @@ impl WorkbenchPanel for MapDetailsPanel {
             return;
         };
 
-        let mut trigger = false;
+        let is_busy = world.resource::<DownloadUiState>().is_busy;
+        ui.add_space(6.0);
         ui.horizontal_wrapped(|ui| {
-            if ui.button(&details_download).clicked() {
-                trigger = true;
+            ui.add_space(6.0);
+            let button = egui::Button::new(if is_busy {
+                &details_download_busy
+            } else {
+                &details_download
+            });
+            if ui.add_enabled(!is_busy, button).clicked() {
+                let asset_root = world.resource::<AssetRootPath>().0.clone();
+                world.resource_scope(|world, mut state: Mut<DownloadUiState>| {
+                    let pending = world.resource::<PendingDownloadReceiver>();
+                    request_download(asset_root, selected.clone(), &mut state, pending);
+                });
             }
             ui.label(&details_download_hint);
+            ui.add_space(6.0);
         });
-
-        if trigger {
-            let asset_root = world.resource::<AssetRootPath>().0.clone();
-            let result = trigger_download(&asset_root, &selected);
-            let mut state = world.resource_mut::<DownloadUiState>();
-            state.last_status = Some(match result {
-                Ok(message) => DownloadStatus {
-                    message,
-                    is_error: false,
-                },
-                Err(err) => DownloadStatus {
-                    message: err.to_string(),
-                    is_error: true,
-                },
-            });
-        }
+        ui.add_space(6.0);
 
         if let Some(status) = &world.resource::<DownloadUiState>().last_status {
             let color = if status.is_error {

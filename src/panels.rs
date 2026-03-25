@@ -316,14 +316,18 @@ impl WorkbenchPanel for MapListPanel {
         drop(t);
 
         ui.heading(self.title());
+        ui.add_space(6.0);
         ui.horizontal(|ui| {
+            ui.add_space(6.0);
             ui.label(&list_search_label);
             ui.add(
                 egui::TextEdit::singleline(&mut self.search_query)
                     .hint_text(&list_search_hint)
                     .desired_width(f32::INFINITY),
             );
+            ui.add_space(6.0);
         });
+        ui.add_space(6.0);
         ui.separator();
 
         if !self.scanned {

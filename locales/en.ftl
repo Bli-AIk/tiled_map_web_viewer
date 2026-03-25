@@ -26,6 +26,7 @@ list-maps-group = Maps
 list-worlds-group = Worlds
 details-no-selection = Select an entry from the Map List panel.
 details-download = Download bundle
+details-download-busy = Preparing bundle...
 details-download-hint = Includes the selected map/world and its referenced TMX, TSX, and image files.
 details-path = Path:
 details-kind = Kind:

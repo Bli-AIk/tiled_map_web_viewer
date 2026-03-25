@@ -26,6 +26,7 @@ list-maps-group = 地图
 list-worlds-group = 世界
 details-no-selection = 请先在地图列表中选择一项内容。
 details-download = 下载资源包
+details-download-busy = 正在准备资源包...
 details-download-hint = 包含当前 map/world 及其引用的 TMX、TSX 和图片文件。
 details-path = 路径：
 details-kind = 类型：

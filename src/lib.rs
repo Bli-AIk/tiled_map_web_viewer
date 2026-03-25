@@ -26,7 +26,7 @@ mod world_view;
 
 use cleanup::{PendingCleanup, handle_map_load, process_pending_cleanup};
 use details_panel::MapDetailsPanel;
-use download::{AssetRootPath, DownloadUiState};
+use download::{AssetRootPath, DownloadUiState, PendingDownloadReceiver, poll_download_jobs};
 pub use manifest::{MapAssetKind, MapBadge, MapDetail, MapManifest, MapManifestEntry};
 use panels::{MapListPanel, MapPreviewPanel};
 use platform::{default_asset_file_path, initial_window_resolution, notify_web_loader_ready};
@@ -224,6 +224,7 @@ fn build_app(config: ViewerConfig) -> App {
         .init_resource::<PreviewInput>()
         .init_resource::<CameraZoomState>()
         .init_resource::<DownloadUiState>()
+        .init_resource::<PendingDownloadReceiver>()
         .init_resource::<RenderSettingsState>()
         .init_resource::<MobileWebUiState>()
         .init_resource::<DevWindowsEnabled>()
@@ -247,6 +248,7 @@ fn build_app(config: ViewerConfig) -> App {
                 ensure_render_settings_dock_layout,
                 handle_dev_menu_actions,
                 notify_web_loader_ready,
+                poll_download_jobs,
             ),
         )
         .add_systems(
